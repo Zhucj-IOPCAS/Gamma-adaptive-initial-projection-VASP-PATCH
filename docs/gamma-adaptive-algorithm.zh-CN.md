@@ -111,7 +111,7 @@ $$\Omega_I[S]=\sum_b w_b\left[J-\sum_{m,n=1}^{J}|(M_S^{(b)})_{mn}|^2\right].$$
 
 利用 $P=SS^\dagger$，也可以写成
 
-$$\Omega_I[P]=\sum_b w_b\left\{J-\mathrm{Tr}\left[PM^{(b)}PM^{(b)\dagger}\right]\right\}.$$
+$$\Omega_I[P]=\sum_b w_b\left\lbrace J-\mathrm{Tr}\left[PM^{(b)}PM^{(b)\dagger}\right]\right\rbrace.$$
 
 $\Omega_I$ 度量目标子空间在周期 overlap 映射下向外部空间的泄漏。Disentanglement 通过最小化 $\Omega_I$ 选择目标子空间。
 
@@ -282,9 +282,9 @@ $$W\mathbf u_{\max}=\lambda_{\max}\mathbf u_{\max}.$$
 $$c=\sqrt{\frac{1+u_z}{2}},z=\frac{u_x+iu_y}{2c},$$
 
 则 $V$ 为：
-
+```math
 $$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
-
+```
 对所有 $\mathbf b$ 迭代该轨道对的 overlap：
 
 $$M^{(\mathbf b)}\rightarrow V^\dagger M^{(\mathbf b)}V.$$
@@ -366,17 +366,17 @@ $$\widetilde U_{\mathrm{total},m\alpha}^{(\Gamma)}=p_\alpha U_{\mathrm{total},m\
 #### 1.4.2 Spinor wannier 轨道的相位规范
 
 对于 spinor 轨道，写成
-
+```math
 $$\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,z}(\mathbf r)\\b_{\alpha,z}(\mathbf r)\end{pmatrix}.$$
-
+```
 所有轨道使用同一个公共自旋基底 $V$：
-
+```math
 $$\Phi_{\alpha,V}^\Gamma(\mathbf r)=V^\dagger\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,V}(\mathbf r)\\b_{\alpha,V}(\mathbf r)\end{pmatrix}.$$
-
+```
 在该基底中，选取对称参考 spinor
-
+```math
 $$\chi_V(\theta,\phi)=e^{-i\pi/4}\begin{pmatrix}e^{-i\phi/2}\cos(\theta/2)\\e^{i\phi/2}\sin(\theta/2)\end{pmatrix}.$$
-
+```
 spinor function表示为
 
 $$\Phi_{\alpha,V}^\Gamma(\mathbf r)=\sqrt{\rho_\alpha(\mathbf r)}e^{i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}\chi_V(\theta_{\alpha,V}(\mathbf r),\phi_{\alpha,V}(\mathbf r)).$$
@@ -420,9 +420,9 @@ $$K\mathbf n=\kappa_{\min}\mathbf n.$$
 $$c=\sqrt{\frac{1+n_z}{2}},$$
 
 $$z=\frac{n_x+in_y}{2c},$$
-
+```math
 $$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
-
+```
 在确定公共主轴后，使用 doubled phase
 
 $$D_\alpha(\mathbf r)=e^{2i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}.$$
