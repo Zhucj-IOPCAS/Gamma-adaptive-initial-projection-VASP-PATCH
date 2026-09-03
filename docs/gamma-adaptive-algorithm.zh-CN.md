@@ -111,7 +111,7 @@ $$\Omega_I[S]=\sum_b w_b\left[J-\sum_{m,n=1}^{J}|(M_S^{(b)})_{mn}|^2\right].$$
 
 利用 $P=SS^\dagger$，也可以写成
 
-$$\Omega_I[P]=\sum_b w_b\left\{J-\operatorname{Tr}\left[PM^{(b)}PM^{(b)\dagger}\right]\right\}.$$
+$$\Omega_I[P]=\sum_b w_b\left\{J-\mathrm{Tr}\left[PM^{(b)}PM^{(b)\dagger}\right]\right\}.$$
 
 $\Omega_I$ 度量目标子空间在周期 overlap 映射下向外部空间的泄漏。Disentanglement 通过最小化 $\Omega_I$ 选择目标子空间。
 
@@ -123,11 +123,11 @@ $$Z[P]=\sum_b w_bM^{(b)}PM^{(b)\dagger}.$$
 
 则 gauge-invariant spread 可以写成
 
-$$\Omega_I[P]=J\sum_b w_b-\operatorname{Tr}\left[PZ[P]\right].$$
+$$\Omega_I[P]=J\sum_b w_b-\mathrm{Tr}\left[PZ[P]\right].$$
 
 因此，最小化 $\Omega_I[P]$ 等价于最大化
 
-$$\Phi[P]=\operatorname{Tr}\left[PZ[P]\right].$$
+$$\Phi[P]=\mathrm{Tr}\left[PZ[P]\right].$$
 
 由于 $Z[P]$ 依赖于待求投影算符 $P$，该问题通过自洽迭代求解。给定上一轮的投影算符 $P^{(i-1)}$，构造
 
@@ -135,7 +135,7 @@ $$Z^{(i)}=\sum_b w_bM^{(b)}P^{(i-1)}M^{(b)\dagger}.$$
 
 在本轮迭代中，$Z^{(i)}$ 被视为固定矩阵。以下将其简记为 $Z$，并通过最大化
 
-$$\operatorname{Tr}\left[PZ\right]$$
+$$\mathrm{Tr}\left[PZ\right]$$
 
 确定新的目标子空间。Frozen 子空间的投影算符可以写成
 
@@ -143,7 +143,7 @@ $$P=P_F+CC^\dagger.$$
 
 代入目标函数得到
 
-$$\operatorname{Tr}\left[PZ\right]=\operatorname{Tr}\left[P_FZ\right]+\operatorname{Tr}\left[C^\dagger ZC\right].$$
+$$\mathrm{Tr}\left[PZ\right]=\mathrm{Tr}\left[P_FZ\right]+\mathrm{Tr}\left[C^\dagger ZC\right].$$
 
 第一项由 frozen 子空间决定，因此只需在 non-frozen outer space $\mathcal G=\mathcal O\setminus\mathcal F$ 中最大化第二项。令 $R_{\mathcal G}$ 的列为 $\mathcal G$ 中的单位坐标向量，并写成
 
@@ -155,7 +155,7 @@ $$Z_{\mathcal G}=R_{\mathcal G}^\dagger ZR_{\mathcal G}.$$
 
 目标函数相应化为
 
-$$\operatorname{Tr}\left[C^\dagger ZC\right]=\operatorname{Tr}\left[V^\dagger Z_{\mathcal G}V\right].$$
+$$\mathrm{Tr}\left[C^\dagger ZC\right]=\mathrm{Tr}\left[V^\dagger Z_{\mathcal G}V\right].$$
 
 根据 Ky Fan 最大值原理，该目标函数的最大值由 $Z_{\mathcal G}$ 最大的 $L$ 个本征值决定。设
 
@@ -163,7 +163,7 @@ $$Z_{\mathcal G}v_a=\lambda_av_a, \lambda_1\geq\lambda_2\geq\cdots,$$
 
 则
 
-$$\max_{V^\dagger V=I_L}\operatorname{Tr}\left[V^\dagger Z_{\mathcal G}V\right]=\sum_{a=1}^{L}\lambda_a.$$
+$$\max_{V^\dagger V=I_L}\mathrm{Tr}\left[V^\dagger Z_{\mathcal G}V\right]=\sum_{a=1}^{L}\lambda_a.$$
 
 因此
 
@@ -265,7 +265,7 @@ $$\sum_{\mathbf b}w_{\mathbf b}|a_3'^{(\mathbf b)}|^2=\mathbf u^TW\mathbf u,$$
 
 其中 $W$ 是 $3\times3$ 实对称矩阵，
 
-$$W_{\alpha\beta}=\sum_{\mathbf b}w_{\mathbf b}\operatorname{Re}\left[a_{\alpha}^{(\mathbf b)}a_{\beta}^{(\mathbf b)*}\right].$$
+$$W_{\alpha\beta}=\sum_{\mathbf b}w_{\mathbf b}\mathrm{Re}\left[a_{\alpha}^{(\mathbf b)}a_{\beta}^{(\mathbf b)\ast}\right].$$
 
 根据 Rayleigh-Ritz 变分原理，
 
@@ -283,7 +283,7 @@ $$c=\sqrt{\frac{1+u_z}{2}},z=\frac{u_x+iu_y}{2c},$$
 
 则 $V$ 为：
 
-$$V=\begin{pmatrix}c&-z^*\\z&c\end{pmatrix}.$$
+$$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
 
 对所有 $\mathbf b$ 迭代该轨道对的 overlap：
 
@@ -353,11 +353,11 @@ $$\mu_{2,\alpha}(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R
 
 对于标量轨道，取波函数振幅最大的位置
 
-$$\mathbf r_\alpha^{\max}=\operatorname*{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
+$$\mathbf r_\alpha^{\max}=\mathrm\ast{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
 
 并使用相位修正
 
-$$p_\alpha=\frac{\phi_\alpha^\Gamma(\mathbf r_\alpha^{\max})^*}{|\phi_\alpha^\Gamma(\mathbf r_\alpha^{\max})|}.$$
+$$p_\alpha=\frac{\phi_\alpha^\Gamma(\mathbf r_\alpha^{\max})^\ast}{|\phi_\alpha^\Gamma(\mathbf r_\alpha^{\max})|}.$$
 
 相应地迭代 Gamma 点变换矩阵：
 
@@ -421,7 +421,7 @@ $$c=\sqrt{\frac{1+n_z}{2}},$$
 
 $$z=\frac{n_x+in_y}{2c},$$
 
-$$V=\begin{pmatrix}c&-z^*\\z&c\end{pmatrix}.$$
+$$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
 
 在确定公共主轴后，使用 doubled phase
 
@@ -437,7 +437,7 @@ $$D_\alpha^S(\mathbf r)=-i\left[\frac{b_{\alpha,V}(\mathbf r)}{|b_{\alpha,V}(\ma
 
 接下来为整条轨道选择一个共同相位 $e^{-i\vartheta_\alpha}$，使修正后轨道相对于参考 spinor 的实部平方在 WS 原胞内最大：
 
-$$F_\alpha(\vartheta_\alpha)=\int_{\Omega_\alpha}\rho_\alpha(\mathbf r)\left[\operatorname{Re}\left(e^{-i\vartheta_\alpha}e^{i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}\right)\right]^2d\mathbf r.$$
+$$F_\alpha(\vartheta_\alpha)=\int_{\Omega_\alpha}\rho_\alpha(\mathbf r)\left[\mathrm{Re}\left(e^{-i\vartheta_\alpha}e^{i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}\right)\right]^2d\mathbf r.$$
 
 定义 doubled-phase 积分
 
@@ -445,7 +445,7 @@ $$C_\alpha=\int_{\Omega_\alpha}\rho_\alpha(\mathbf r)D_\alpha(\mathbf r)d\mathbf
 
 则
 
-$$F_\alpha(\vartheta_\alpha)=\frac{1}{2}\int_{\Omega_\alpha}\rho_\alpha(\mathbf r)d\mathbf r+\frac{1}{2}\operatorname{Re}\left[e^{-2i\vartheta_\alpha}C_\alpha\right].$$
+$$F_\alpha(\vartheta_\alpha)=\frac{1}{2}\int_{\Omega_\alpha}\rho_\alpha(\mathbf r)d\mathbf r+\frac{1}{2}\mathrm{Re}\left[e^{-2i\vartheta_\alpha}C_\alpha\right].$$
 
 因此 $F_\alpha$ 在
 
@@ -473,14 +473,14 @@ $$\widetilde\Phi_{\bar\alpha}^\Gamma=\pm\Theta\widetilde\Phi_\alpha^\Gamma.$$
 
 对于 Wannier 轨道 $\alpha$，以其中心 $\boldsymbol\tau_\alpha$ 构造 Wigner--Seitz 原胞 $\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)$。定义全 $\mathbf k$ Bloch 态与 Gamma 点 Bloch 态在该 WS 原胞内的 overlap：
 
-$$I_{nm}^{(\mathbf k;\alpha)}=\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k}^*(\mathbf r)\psi_{m\Gamma}(\mathbf r).$$
+$$I_{nm}^{(\mathbf k;\alpha)}=\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k}^\ast(\mathbf r)\psi_{m\Gamma}(\mathbf r).$$
 
 对于 spinor 波函数，内积包含两个 spinor 分量之和：
 
-$$I_{nm}^{(\mathbf k;\alpha)}=\sum_s\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k s}^*(\mathbf r)\psi_{m\Gamma s}(\mathbf r).$$
+$$I_{nm}^{(\mathbf k;\alpha)}=\sum_s\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k s}^\ast(\mathbf r)\psi_{m\Gamma s}(\mathbf r).$$
 
 由于$\mathbf k$ 点波函数与 Gamma 点波函数的 Bloch phase 在原胞内不能相互消去，因此该 integrand
-$$\psi_{n\mathbf k}^*(\mathbf r)\psi_{m\Gamma}(\mathbf r)=e^{-i\mathbf k\cdot\mathbf r}u_{n\mathbf k}^*(\mathbf r)u_{m\Gamma}(\mathbf r).$$
+$$\psi_{n\mathbf k}^\ast(\mathbf r)\psi_{m\Gamma}(\mathbf r)=e^{-i\mathbf k\cdot\mathbf r}u_{n\mathbf k}^\ast(\mathbf r)u_{m\Gamma}(\mathbf r).$$
 
  不具有晶格周期性。该 overlap 不能直接由周期平面波系数的内积得到，而需要在选定的实空间 WS 原胞内显式积分。
 
