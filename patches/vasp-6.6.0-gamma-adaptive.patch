@@ -1,0 +1,2433 @@
+diff --git a/src/mlwf.F b/src/mlwf.F
+index 57cf4bd..ed89717 100644
+--- a/src/mlwf.F
++++ b/src/mlwf.F
+@@ -11,3 +11,3 @@ MODULE mlwf
+    ENUM, BIND(C)
+-      ENUMERATOR :: PROJ_UNKNOWN, PROJ_SCDM, PROJ_WANNIER90, PROJ_LOCPROJ, PROJ_LOCPROJAUTO
++      ENUMERATOR :: PROJ_UNKNOWN, PROJ_SCDM, PROJ_WANNIER90, PROJ_LOCPROJ, PROJ_LOCPROJAUTO, PROJ_GAMMA_ADAPTIVE
+    END ENUM
+@@ -68,2 +68,3 @@ MODULE mlwf
+       REAL(q) :: DIS_WIN_MIN
++      LOGICAL :: FROZEN_STATES
+       ! related to MMN file
+@@ -72,2 +73,3 @@ MODULE mlwf
+       INTEGER, ALLOCATABLE :: NNCELL(:,:,:)
++      REAL(q), ALLOCATABLE :: WB_OUT(:)
+       ! Input to wannier90
+@@ -152,2 +154,4 @@ MODULE mlwf
+    LOGICAL, SAVE :: LSCDM = .FALSE.
++   !> Use Gamma-adaptive method to construct the initial wannier projections.
++   LOGICAL, SAVE :: LGAMMA_ADAPTIVE = .FALSE.
+ 
+@@ -174,4 +178,5 @@ MODULE mlwf
+        num_wann_, proj_site_, proj_l_, proj_m_, proj_radial_, proj_z_, &
+-       proj_x_, proj_zona_, exclude_bands_ &
+-       , proj_s_, proj_s_qaxis_ &
++       proj_x_, proj_zona_, exclude_bands_, proj_s_, proj_s_qaxis_, &
++       wb_out_, dis_win_min_out_, dis_win_max_out_, dis_froz_min_out_, &
++       dis_froz_max_out_, frozen_states_out_ &  ! obtain W_B and disentangle info from wannier90 setup processing
+        )
+@@ -207,2 +212,6 @@ MODULE mlwf
+        real(kind=dp), dimension(3,num_bands_tot_), optional, intent(out) :: proj_s_qaxis_
++       real(kind=dp), optional, intent(out) :: wb_out_(:)
++       real(kind=dp), optional, intent(out) :: dis_win_min_out_,dis_win_max_out_
++       real(kind=dp), optional, intent(out) :: dis_froz_min_out_,dis_froz_max_out_
++       logical, optional, intent(out) :: frozen_states_out_
+      end subroutine wannier_setup
+@@ -377,2 +386,5 @@ MODULE mlwf
+ 
++   ! Weather to use the Gamma-adaptive method to calculate the initial wannier projections.
++   CALL PROCESS_INCAR(.FALSE., IU0, IU5, 'LGAMMA_ADAPTIVE', LGAMMA_ADAPTIVE, IERR, WRITEXMLINCAR)
++
+    !> write the spn file
+@@ -437,3 +449,3 @@ MODULE mlwf
+    LOGICAL MLWFRUN
+-   MLWFRUN = ALLOCATED(LPRJ_functions).OR.WANNIER90().OR.LSCDM
++   MLWFRUN = ALLOCATED(LPRJ_functions).OR.WANNIER90().OR.LSCDM.OR.LGAMMA_ADAPTIVE
+  END FUNCTION
+@@ -505,2 +517,3 @@ MODULE mlwf
+    IF (LOCPROJ_AUTO)              P_MLWF%PROJ_MODE = PROJ_LOCPROJAUTO
++   IF (LGAMMA_ADAPTIVE)           P_MLWF%PROJ_MODE = PROJ_GAMMA_ADAPTIVE
+    ! WANNIER90_MODE has to be determined inside MLWF_WANNIER90_SETUP
+@@ -518,3 +531,3 @@ MODULE mlwf
+      ! SCDM projections (default)
+-     CASE (PROJ_SCDM,PROJ_UNKNOWN)
++     CASE (PROJ_SCDM,PROJ_UNKNOWN,PROJ_GAMMA_ADAPTIVE)
+          IF (NUM_WANN == 0) THEN
+@@ -537,2 +550,9 @@ MODULE mlwf
+    END IF
++   ! PROJ_GAMMA_ADAPTIVE SPIN CHECK
++   IF (P_MLWF%PROJ_MODE == PROJ_GAMMA_ADAPTIVE) THEN
++      IF (WDES%NRSPINORS == 2 .AND. WDES%ISPIN == 2) THEN
++         CALL vtutor%error( &
++            'LGAMMA_ADAPTIVE not supports ISPIN=2 with spinors. This should not happen.')
++      ENDIF
++   ENDIF
+    ! Compute MMN
+@@ -582,2 +602,8 @@ MODULE mlwf
+       DEALLOCATE(A_MATRIX_TMP)
++   ELSE IF (P_MLWF%PROJ_MODE == PROJ_GAMMA_ADAPTIVE) THEN
++#ifndef gammareal
++      CALL MLWF_GAMMA_ADAPTIVE_AMN(P_MLWF, WDES, W, P, KPOINTS, CQIJ, T_INFO, LATT_CUR, INFO, IO)
++#else
++      CALL vtutor%error('LGAMMA_ADAPTIVE is not available in vasp_gam.')
++#endif
+    ELSE IF (P_MLWF%PROJ_MODE/=PROJ_UNKNOWN) THEN
+@@ -729,2 +755,3 @@ MODULE mlwf
+    IF (ALLOCATED(MLWF%NNCELL)) DEALLOCATE(MLWF%NNCELL)
++   IF (ALLOCATED(MLWF%WB_OUT)) DEALLOCATE(MLWF%WB_OUT)
+ 
+@@ -761,2 +788,4 @@ MODULE mlwf
+            STRING = 'UNKOWN'
++       CASE(PROJ_GAMMA_ADAPTIVE)
++           STRING = 'GAMMA_ADAPTIVE'
+    END SELECT
+@@ -1043,3 +1072,3 @@ MODULE mlwf
+    MLWF%SZNAM1 = INFO%SZNAM1
+-#define use_kptsfull
++!#define use_kptsfull
+ #ifdef use_kptsfull
+@@ -1104,2 +1133,3 @@ MODULE mlwf
+    MLWF%DIS_WIN_MAX = HUGE(MLWF%DIS_WIN_MAX)
++   MLWF%FROZEN_STATES = .FALSE.
+ 
+@@ -1130,2 +1160,6 @@ MODULE mlwf
+ 
++   IF (ALLOCATED(MLWF%WB_OUT)) DEALLOCATE(MLWF%WB_OUT)
++   ALLOCATE(MLWF%WB_OUT(NUM_NNMAX))
++   MLWF%WB_OUT=0.0_q
++
+    ALLOCATE(MLWF%NNLIST(MLWF%NKPTS,NUM_NNMAX),MLWF%NNCELL(3,MLWF%NKPTS,NUM_NNMAX))
+@@ -1151,3 +1185,6 @@ MODULE mlwf
+   &                   proj_site,proj_l,proj_m,proj_radial,proj_z,proj_x,proj_zona,exclude_bands, &
+-  &                   proj_s,proj_s_qaxisx)
++  &                   proj_s,proj_s_qaxisx, wb_out_=MLWF%WB_OUT, &
++  &                   dis_win_min_out_=MLWF%DIS_WIN_MIN, dis_win_max_out_=MLWF%DIS_WIN_MAX, &
++  &                   dis_froz_min_out_=MLWF%DIS_FROZ_MIN, dis_froz_max_out_=MLWF%DIS_FROZ_MAX, &
++  &                   frozen_states_out_=MLWF%FROZEN_STATES)
+    ELSE
+@@ -1175,2 +1212,9 @@ MODULE mlwf
+ 
++   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%DIS_WIN_MIN,1) )
++   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%DIS_WIN_MAX,1) )
++   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%DIS_FROZ_MIN,1) )
++   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%DIS_FROZ_MAX,1) )
++   CALLMPI( M_bcast_l(MLWF%COMM,MLWF%FROZEN_STATES,1) )
++   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%WB_OUT,SIZE(MLWF%WB_OUT)) )
++
+    ALLOCATE(MLWF%EXCLUDE_BAND(MLWF%NB_TOT))
+@@ -1425,2 +1469,1893 @@ MODULE mlwf
+ 
++#ifndef gammareal
++!***********************************************************************
++!> Construct the adaptive A_matrix from Gamma-localized Wannier states.
++!>
++!> This routine extracts the Gamma-point Bloch states, selects and, when
++!> necessary, disentangles the target subspace, and performs the complex
++!> Jacobi localization. It then constructs the real-space Wannier states,
++!> determines their centers, fixes their phases, and evaluates their
++!> overlaps with the full-k Bloch states to assemble the adaptive A_matrix.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_AMN(MLWF, WDES, W, P, KPOINTS, CQIJ, T_INFO, LATT_CUR, INFO, IO)
++   USE base
++   USE constant
++   USE pseudo
++   USE mkpoints
++   USE poscar
++   USE lattice
++   USE wave_high
++   USE radial
++   USE full_kpoints, ONLY: KPOINTS_FULL, KPOINT_IN_FULL_GRID
++
++   IMPLICIT NONE
++
++   TYPE(MLWF_type),    INTENT(INOUT) :: MLWF
++   TYPE(wavedes),      INTENT(IN)    :: WDES
++   TYPE(wavespin),     INTENT(IN)    :: W
++   TYPE(potcar),       INTENT(IN)    :: P(:)
++   TYPE(kpoints_struct), INTENT(IN)  :: KPOINTS
++   OVERLAP,            INTENT(IN)    :: CQIJ(:,:,:,:)
++   TYPE(type_info),    INTENT(IN)    :: T_INFO
++   TYPE(latt),         INTENT(IN)    :: LATT_CUR
++   TYPE(info_struct),  INTENT(IN)    :: INFO
++   TYPE(in_struct),    INTENT(IN)    :: IO
++
++   TYPE(MLWF_type), TARGET  :: MLWF_GM
++   TYPE(MLWF_type), POINTER :: P_MLWF_GM
++   TYPE(wavedes), TARGET    :: WDES_GM
++   TYPE(wavespin)           :: W_GM
++   TYPE(kpoints_struct)     :: KPOINTS_GM
++
++   COMPLEX(q), ALLOCATABLE, TARGET :: CPTWFP_GM(:,:,:,:)
++   COMPLEX(q), ALLOCATABLE, TARGET :: CPROJ_GM(:,:,:,:)
++   COMPLEX(q), ALLOCATABLE, TARGET :: CELTOT_GM(:,:,:)
++   REAL(q),    ALLOCATABLE, TARGET :: FERWE_GM(:,:,:)
++
++   ! Window masks over the complete active Gamma-band space.
++   LOGICAL, ALLOCATABLE :: OUTER_MASK(:),INNER_MASK(:)
++   COMPLEX(q), ALLOCATABLE :: S_GM_DISENT(:,:),M_SELECTED(:,:,:),U_GM_JACOBI(:,:)
++   INTEGER :: NUM_BAND,NUM_WANN
++   ! U_GM_DATA(active_gamma_band,wannier,spin_channel)
++   COMPLEX(q), ALLOCATABLE :: U_GM_DATA(:,:,:)
++   ! Cartesian and folded fractional Gamma Wannier centers.
++   REAL(q), ALLOCATABLE :: TAU_WANN_CART(:,:,:)
++   REAL(q), ALLOCATABLE :: TAU_WANN_FRAC(:,:,:)
++   INTEGER :: IK_GM, ISP_IDX, IW_IDX
++   ! I_KGAMMA(k_band,gamma_band,wannier,kpoint,spin) = <psi_{k_band,k}|chi_WS(tau_wannier)|psi_{gamma_band,Gamma}>
++   COMPLEX(q), ALLOCATABLE :: I_KGAMMA(:,:,:,:,:)
++   COMPLEX(q), ALLOCATABLE :: WF_SPINOR(:,:,:)
++
++   NUM_WANN = MLWF%NUM_WANN
++   NUM_BAND = MLWF%NB_TOT-MLWF%NEXCLB
++
++   ! -------------------------------------------------------------------
++   ! Stage A: Build a Gamma wavefunction container for Wannier90 setup.
++   ! -------------------------------------------------------------------
++   IK_GM = KPOINT_IN_FULL_GRID((/0.0_q, 0.0_q, 0.0_q/), KPOINTS_FULL)
++
++   IF (IO%IU0 >= 0) THEN
++      WRITE(IO%IU0,*) '========== BEGIN GAMMA WANNIER SETUP =========='
++      WRITE(IO%IU0,*) 'Building Gamma-only Wannier Scheme. IK_GM = ', IK_GM
++   ENDIF
++
++   WDES_GM = WDES
++   WDES_GM%NKPTS = 1
++
++   ALLOCATE(CPTWFP_GM(SIZE(W%CPTWFP, 1), SIZE(W%CPTWFP, 2), 1, SIZE(W%CPTWFP, 4)))
++   IF (ASSOCIATED(W%CPROJ)) ALLOCATE(CPROJ_GM(SIZE(W%CPROJ, 1), SIZE(W%CPROJ, 2), 1, SIZE(W%CPROJ, 4)))
++   ALLOCATE(CELTOT_GM(SIZE(W%CELTOT, 1), 1, SIZE(W%CELTOT, 3)))
++   ALLOCATE(FERWE_GM(SIZE(W%FERWE, 1), 1, SIZE(W%FERWE, 3)))
++
++   W_GM%WDES   => WDES_GM
++   W_GM%CPTWFP => CPTWFP_GM
++   IF (WDES%LOVERL) W_GM%CPROJ => CPROJ_GM
++   W_GM%CELTOT => CELTOT_GM
++   W_GM%FERWE  => FERWE_GM
++
++   ! Copy the Gamma-point wavefunction data into the one-k-point container.
++   DO ISP_IDX = 1, WDES%ISPIN
++      W_GM%CPTWFP(:, :, 1, ISP_IDX) = W%CPTWFP(:, :, IK_GM, ISP_IDX)
++      IF (WDES%LOVERL) W_GM%CPROJ(:, :, 1, ISP_IDX) = W%CPROJ(:, :, IK_GM, ISP_IDX)
++      W_GM%CELTOT(:, 1, ISP_IDX) = W%CELTOT(:, IK_GM, ISP_IDX)
++      W_GM%FERWE(:, 1, ISP_IDX) = W%FERWE(:, IK_GM, ISP_IDX)
++   ENDDO
++
++   ! -----------------------------------------------------------
++   ! Stage B: Run Wannier90 setup for the Gamma problem.
++   ! -----------------------------------------------------------
++   P_MLWF_GM => MLWF_GM
++   P_MLWF_GM%seed_name = TRIM(MLWF%seed_name)//"_GM"
++   P_MLWF_GM%NUM_WANN = NUM_WANN
++   KPOINTS_GM = KPOINTS
++   KPOINTS_GM%NKPTS = 1
++   KPOINTS_GM%NKPX  = 1
++   KPOINTS_GM%NKPY  = 1
++   KPOINTS_GM%NKPZ  = 1
++
++   CALL MLWF_WANNIER90_SETUP(P_MLWF_GM, WDES_GM, W_GM, KPOINTS_GM, P, CQIJ, T_INFO, LATT_CUR, INFO, IO)
++   CALL MLWF_WANNIER90_EIG(P_MLWF_GM, W_GM, .FALSE., IO)
++   CALL MLWF_WANNIER90_MMN(P_MLWF_GM, WDES_GM, W_GM, P, CQIJ, T_INFO, LATT_CUR, .FALSE., INFO, IO)
++
++   ! -----------------------------------------------------------
++   ! Stage C: perform Gamma-Wavefunction Jacobi Localization.
++   ! -----------------------------------------------------------
++   ALLOCATE(U_GM_DATA(NUM_BAND,NUM_WANN,WDES%ISPIN))
++   ALLOCATE(TAU_WANN_CART(3,NUM_WANN,WDES%ISPIN))
++   ALLOCATE(TAU_WANN_FRAC(3,NUM_WANN,WDES%ISPIN))
++
++   U_GM_DATA   = CMPLX(0.0_q,0.0_q,q)
++   TAU_WANN_CART = 0.0_q
++   TAU_WANN_FRAC = 0.0_q
++
++   DO ISP_IDX = 1, WDES%ISPIN
++      ! Only the master node performs the Gamma Jacobi localization.
++      IF (WDES%COMM%NODE_ME == 1) THEN
++         CALL MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS(P_MLWF_GM,ISP_IDX,OUTER_MASK,INNER_MASK,IO)
++         CALL MLWF_GAMMA_ADAPTIVE_DISENTANGLE(P_MLWF_GM,ISP_IDX,OUTER_MASK,INNER_MASK,S_GM_DISENT,M_SELECTED,IO)
++         CALL MLWF_GAMMA_ADAPTIVE_JACOBI_LOCALIZE(P_MLWF_GM,M_SELECTED,ISP_IDX,U_GM_JACOBI,IO)
++         U_GM_DATA(:,:,ISP_IDX)=MATMUL(S_GM_DISENT,U_GM_JACOBI)
++
++         IF (ALLOCATED(U_GM_JACOBI)) DEALLOCATE(U_GM_JACOBI)
++         IF (ALLOCATED(S_GM_DISENT)) DEALLOCATE(S_GM_DISENT)
++         IF (ALLOCATED(M_SELECTED)) DEALLOCATE(M_SELECTED)
++         IF (ALLOCATED(OUTER_MASK)) DEALLOCATE(OUTER_MASK)
++         IF (ALLOCATED(INNER_MASK)) DEALLOCATE(INNER_MASK)
++
++      ENDIF
++      CALLMPI(M_bcast_z_from(WDES%COMM,U_GM_DATA(1,1,ISP_IDX),SIZE(U_GM_DATA(:,:,ISP_IDX)),1))
++
++      CALL MLWF_GAMMA_ADAPTIVE_REALSPACE_SPINOR(P_MLWF_GM,W_GM,ISP_IDX,U_GM_DATA(:,:,ISP_IDX),WF_SPINOR)
++
++      IF (WDES%COMM%NODE_ME == 1) THEN
++         CALL MLWF_GAMMA_ADAPTIVE_LOCATE_CENTER(WF_SPINOR,W_GM%WDES,LATT_CUR,ISP_IDX,TAU_WANN_FRAC(:,:,ISP_IDX),IO)
++         CALL MLWF_GAMMA_ADAPTIVE_PHASE_FIX(WF_SPINOR,W_GM%WDES,U_GM_DATA(:,:,ISP_IDX),IO)
++      ENDIF
++      CALLMPI(M_bcast_d_from(WDES%COMM,TAU_WANN_FRAC(1,1,ISP_IDX),3*NUM_WANN,1))
++      CALLMPI(M_bcast_z_from(WDES%COMM,U_GM_DATA(1,1,ISP_IDX),SIZE(U_GM_DATA(:,:,ISP_IDX)),1))
++
++      IF (ALLOCATED(WF_SPINOR)) DEALLOCATE(WF_SPINOR)
++
++      ! Fold fractional centers and construct Cartesian centers.
++      DO IW_IDX = 1, NUM_WANN
++         TAU_WANN_FRAC(:,IW_IDX,ISP_IDX) = &
++            TAU_WANN_FRAC(:,IW_IDX,ISP_IDX) - REAL(NINT(TAU_WANN_FRAC(:,IW_IDX,ISP_IDX)),q)
++         TAU_WANN_CART(:,IW_IDX,ISP_IDX) = MATMUL(LATT_CUR%A,TAU_WANN_FRAC(:,IW_IDX,ISP_IDX))
++      ENDDO
++
++      ! TAU_U_DEBUG: BLOCK
++      !    INTEGER :: IW_IDX, IB_IDX
++      !    IF (IO%IU0 >= 0) THEN
++      !       WRITE(IO%IU0,*) '========== DEBUG: U_GM_DATA MATRIX ELEMENTS =========='
++      !       WRITE(IO%IU0,*) 'Collinear spin channel ISP = ', ISP_IDX
++      !       WRITE(IO%IU0,'(A,2I8)') 'Matrix Size (NBANDS x NWANN): ',SIZE(U_GM_DATA,1), SIZE(U_GM_DATA,2)
++      !       DO IW_IDX = 1, SIZE(U_GM_DATA,2)
++      !          DO IB_IDX = 1, SIZE(U_GM_DATA,1)
++      !             WRITE(IO%IU0,'(A,3I6,A,2F18.12)')'U_GM(band,wann,spin)=', &
++      !                IB_IDX,IW_IDX,ISP_IDX,' = ',U_GM_DATA(IB_IDX,IW_IDX,ISP_IDX)
++      !          ENDDO
++      !       ENDDO
++      !       WRITE(IO%IU0,*) '========== DEBUG: GAMMA WANNIER CENTERS =========='
++      !       DO IW_IDX = 1, NUM_WANN
++      !          WRITE(IO%IU0,'(A,I6,A,3F18.12)') &
++      !             'Wannier center ',IW_IDX,' Cartesian: ',TAU_WANN_CART(:,IW_IDX,ISP_IDX)
++      !          WRITE(IO%IU0,'(A,I6,A,3F18.12)') &
++      !             'Wannier center ',IW_IDX,' Fractional: ',TAU_WANN_FRAC(:,IW_IDX,ISP_IDX)
++      !       ENDDO
++      !    ENDIF
++      ! END BLOCK TAU_U_DEBUG
++
++      ! CENTER_DEBUG: BLOCK
++      !    ! Check consistency between extracted centers and MMN phases.
++      !    INTEGER :: B_DBG,M_DBG,IB1_DBG,IB2_DBG
++      !    REAL(q) :: B_VEC_DBG(3),REAL_PROJ_DBG,OBS_PHASE_DBG
++      !    COMPLEX(q) :: Z_COMP_DBG
++      !    IF (IO%IU0 >= 0) THEN
++      !       WRITE(IO%IU0,*) '========== DEBUG: center/MMN consistency =========='
++      !       DO B_DBG = 1, P_MLWF_GM%NNTOT
++      !          B_VEC_DBG = MATMUL(TRANSPOSE(P_MLWF_GM%recip_lattice),REAL(P_MLWF_GM%NNCELL(:,1,B_DBG),q))
++      !          DO M_DBG = 1, NUM_WANN
++      !             Z_COMP_DBG = CMPLX(0.0_q,0.0_q,q)
++      !             DO IB1_DBG=1,NUM_BAND
++      !                DO IB2_DBG=1,NUM_BAND
++      !                   Z_COMP_DBG = Z_COMP_DBG+CONJG(U_GM_DATA(IB1_DBG,M_DBG,ISP_IDX))* &
++      !                      P_MLWF_GM%M_matrix(IB1_DBG,IB2_DBG,B_DBG,1,ISP_IDX)*U_GM_DATA(IB2_DBG,M_DBG,ISP_IDX)
++      !                ENDDO
++      !             ENDDO
++      !             REAL_PROJ_DBG = DOT_PRODUCT(B_VEC_DBG,TAU_WANN_CART(:,M_DBG,ISP_IDX))
++      !             OBS_PHASE_DBG = -ATAN2(AIMAG(Z_COMP_DBG),REAL(Z_COMP_DBG,q))
++      !             WRITE(IO%IU0,'(A,I2,A,I3,A,F12.6,A,F12.6,A,F12.6)') &
++      !                'WF = ',M_DBG,' wb = ',B_DBG,' REALPHASE: b.r_n = ',REAL_PROJ_DBG, &
++      !                ' KPHASE: -phi = ',OBS_PHASE_DBG,' Diff/2pi = ',(REAL_PROJ_DBG-OBS_PHASE_DBG)/TPI
++      !          ENDDO
++      !       ENDDO
++      !    ENDIF
++      ! END BLOCK CENTER_DEBUG
++
++   ENDDO
++
++   ! TIMER: BLOCK
++   !    INTEGER :: T0,T1,TR
++   !    CALLMPI( M_barrier(WDES%COMM) )
++   !    CALL SYSTEM_CLOCK(T0,TR)
++   !    CALL MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP(MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,TAU_WANN_FRAC,I_KGAMMA,IO)
++   !    CALLMPI( M_barrier(WDES%COMM) )
++   !    CALL SYSTEM_CLOCK(T1)
++   !    IF (IO%IU0 >= 0) WRITE(IO%IU0,'(A,F16.6,A)') &
++   !       'PEAD GAMMA OVERLAP TIME = ',REAL(T1-T0,q)/REAL(TR,q),' s'
++   ! END BLOCK TIMER
++   CALL MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP(MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,TAU_WANN_FRAC,I_KGAMMA,IO)
++   CALL MLWF_GAMMA_ADAPTIVE_BUILD_AMN(MLWF,I_KGAMMA,U_GM_DATA,IO)
++
++   IF (ALLOCATED(I_KGAMMA)) DEALLOCATE(I_KGAMMA)
++   IF (ALLOCATED(U_GM_DATA))   DEALLOCATE(U_GM_DATA)
++   IF (ALLOCATED(TAU_WANN_CART)) DEALLOCATE(TAU_WANN_CART)
++   IF (ALLOCATED(TAU_WANN_FRAC)) DEALLOCATE(TAU_WANN_FRAC)
++
++   IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Adaptive AMN generation COMPLETED.'
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_AMN
++!***********************************************************************
++!> Select the outer and frozen bands of the Gamma-point Bloch funcs.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS(MLWF_GM,ISP_IDX,OUTER_MASK,INNER_MASK,IO)
++   USE base
++   USE tutor, ONLY: vtutor
++
++   IMPLICIT NONE
++
++   TYPE(MLWF_type), INTENT(IN) :: MLWF_GM
++   INTEGER, INTENT(IN) :: ISP_IDX
++   LOGICAL, ALLOCATABLE, INTENT(OUT) :: OUTER_MASK(:),INNER_MASK(:)
++   TYPE(in_struct), INTENT(IN) :: IO
++
++   INTEGER :: NUM_BAND,NUM_WANN,NUM_OUTER,NUM_INNER,I_BAND
++
++   NUM_WANN = MLWF_GM%NUM_WANN
++   NUM_BAND = MLWF_GM%NB_TOT-MLWF_GM%NEXCLB
++
++   IF (.NOT.ALLOCATED(MLWF_GM%eigenvalues)) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: eigenvalues are not allocated.')
++   IF (SIZE(MLWF_GM%eigenvalues,2)/=1 .OR. SIZE(MLWF_GM%eigenvalues,3)<ISP_IDX) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: invalid eigenvalue dimensions.')
++   IF (NUM_BAND/=SIZE(MLWF_GM%eigenvalues,1)) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: inconsistent active-band count.')
++   IF (MLWF_GM%NKPTS/=1) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: the Gamma subproblem must contain exactly one k point.')
++   IF (.NOT.ALLOCATED(MLWF_GM%kpt_latt)) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: kpt_latt is not allocated.')
++   IF (SIZE(MLWF_GM%kpt_latt,1)/=3 .OR. SIZE(MLWF_GM%kpt_latt,2)/=1) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: invalid Gamma k-point dimensions.')
++   IF (ISP_IDX<1 .OR. ISP_IDX>MLWF_GM%ISPIN) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS: invalid spin channel.')
++
++   ALLOCATE(OUTER_MASK(NUM_BAND))
++   ALLOCATE(INNER_MASK(NUM_BAND))
++   OUTER_MASK=.FALSE.
++   INNER_MASK=.FALSE.
++
++   IF (NUM_BAND==NUM_WANN) THEN
++      OUTER_MASK=.TRUE.
++      INNER_MASK=.TRUE.
++   ELSE
++      DO I_BAND=1,NUM_BAND
++         OUTER_MASK(I_BAND) = MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX)>=MLWF_GM%DIS_WIN_MIN .AND. &
++                              MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX)<=MLWF_GM%DIS_WIN_MAX
++         INNER_MASK(I_BAND) = MLWF_GM%FROZEN_STATES .AND. &
++                              MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX)>=MLWF_GM%DIS_FROZ_MIN .AND. &
++                              MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX)<=MLWF_GM%DIS_FROZ_MAX
++      ENDDO
++   ENDIF
++
++   NUM_OUTER=COUNT(OUTER_MASK)
++   NUM_INNER=COUNT(INNER_MASK)
++
++   IF (IO%IU0>=0) THEN
++      WRITE(IO%IU0,*) '========== GAMMA DISENTANGLEMENT WINDOWS =========='
++      WRITE(IO%IU0,'(A,I6)') 'ISP_IDX: ',ISP_IDX
++      WRITE(IO%IU0,'(A,2F18.8)') 'outer window min/max: ',MLWF_GM%DIS_WIN_MIN,MLWF_GM%DIS_WIN_MAX
++      WRITE(IO%IU0,'(A,L2)') 'frozen states: ',MLWF_GM%FROZEN_STATES
++      WRITE(IO%IU0,'(A,2F18.8)') 'frozen window min/max: ', MLWF_GM%DIS_FROZ_MIN,MLWF_GM%DIS_FROZ_MAX
++      WRITE(IO%IU0,'(A,5I8)') 'N_BAND / NUM_OUTER / N_WANN / NUM_INNER / NUM_SELECT: ',NUM_BAND,NUM_OUTER,NUM_WANN,NUM_INNER,NUM_WANN-NUM_INNER
++      WRITE(IO%IU0,*) 'active_band   eigenvalue   outer   inner(frozen)'
++      DO I_BAND=1,NUM_BAND
++         WRITE(IO%IU0,'(I10,2X,F18.9,4X,L2,5X,L2)') &
++         I_BAND,MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX),OUTER_MASK(I_BAND),INNER_MASK(I_BAND)
++      ENDDO
++      FLUSH(IO%IU0)
++   ENDIF
++
++   IF (NUM_OUTER<NUM_WANN) THEN
++      CALL vtutor%error('LGAMMA_ADAPTIVE: outer window contains fewer states than NUM_WANN.')
++   ELSEIF (NUM_INNER>NUM_WANN) THEN
++      CALL vtutor%error('LGAMMA_ADAPTIVE: frozen window contains more states than NUM_WANN.')
++   ELSEIF (ANY(INNER_MASK .AND. .NOT. OUTER_MASK)) THEN
++      CALL vtutor%error('LGAMMA_ADAPTIVE: inner window is not contained in outer window.')
++   ELSEIF (NUM_OUTER==NUM_WANN .AND. NUM_INNER==NUM_WANN) THEN
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma disentanglement stage: skipped because NUM_OUTER = NUM_INNER = NUM_WANN.'
++   ELSEIF (NUM_OUTER==NUM_WANN) THEN
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma disentanglement stage: skipped because NUM_OUTER = NUM_WANN.'
++   ELSEIF (NUM_INNER==NUM_WANN) THEN
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma disentanglement stage: skipped because NUM_INNER = NUM_WANN.'
++   ELSE
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma disentanglement stage: SMV iteration required.'
++   ENDIF
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_SELECT_WINDOWS
++!***********************************************************************
++!> Select the optimal J-dimensional Gamma subspace by minimizing Omega_I.
++!>
++!> S_GM_DISENT(B,J) is expressed in the compact outer-window basis.
++!> M_SELECTED(J,J,NNTOT) is the fixed-subspace overlap consumed by Jacobi.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_DISENTANGLE(MLWF_GM,ISP,OUTER_MASK,INNER_MASK,S_GM_DISENT,M_SELECTED,IO)
++   USE base
++   USE tutor, ONLY: vtutor
++   IMPLICIT NONE
++
++   TYPE(MLWF_type), INTENT(IN) :: MLWF_GM
++   INTEGER, INTENT(IN) :: ISP
++   LOGICAL, ALLOCATABLE, INTENT(IN) :: OUTER_MASK(:),INNER_MASK(:)
++   COMPLEX(q), ALLOCATABLE, INTENT(OUT) :: S_GM_DISENT(:,:),M_SELECTED(:,:,:)
++   TYPE(in_struct), INTENT(IN) :: IO
++
++   INTEGER, PARAMETER :: DIS_NUM_ITER=200
++   INTEGER, PARAMETER :: DIS_CONV_WINDOW=3
++   REAL(q), PARAMETER :: DIS_MIX_RATIO=0.5_q
++   REAL(q), PARAMETER :: DIS_CONV_TOL=1.0E-7_q
++   REAL(q), PARAMETER :: DIS_PROJECTOR_TOL=1.0E-7_q
++
++   INTEGER :: NUM_BAND,NUM_WANN,NUM_OUTER,NUM_INNER,NUM_FREE,NUM_SELECT,NUM_NEIGH
++   INTEGER :: I_BAND,I_FREE,I_WANN,I_NEIGH,I_EIG,I_INNER,I_SELECT
++   INTEGER :: ITER,CONV_COUNT,EIG_INFO,LWORK
++   REAL(q) :: OMEGA_OLD,OMEGA_NEW,DELTA_OMEGA,DELTA_PROJECTOR
++   REAL(q) :: ORTH_ERROR,FROZEN_ERROR
++   LOGICAL :: CONVERGED
++
++   LOGICAL, ALLOCATABLE :: FREE_MASK(:),SELECT_MASK(:)
++   REAL(q), ALLOCATABLE :: EIGENVALUE(:),RWORK(:)
++   COMPLEX(q), ALLOCATABLE :: M_GM_ACTIVE(:,:,:),S_NEW(:,:),P_OLD(:,:),P_NEW(:,:)
++   COMPLEX(q), ALLOCATABLE :: Z_NEW(:,:),Z_MIXED(:,:),Z_FREE(:,:),WORK(:),ORTH_CHECK(:,:)
++
++   EXTERNAL ZHEEV
++
++   NUM_BAND=MLWF_GM%NB_TOT-MLWF_GM%NEXCLB
++   NUM_WANN=MLWF_GM%NUM_WANN
++   NUM_OUTER=COUNT(OUTER_MASK)
++   NUM_INNER=COUNT(INNER_MASK)
++   NUM_FREE=NUM_OUTER-NUM_INNER
++   NUM_SELECT=NUM_WANN-NUM_INNER
++   NUM_NEIGH=MLWF_GM%NNTOT
++
++   IF (NUM_OUTER<NUM_WANN) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: outer window contains fewer states than NUM_WANN.')
++   IF (NUM_INNER>NUM_WANN) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: frozen window contains more states than NUM_WANN.')
++   IF (SIZE(MLWF_GM%WB_OUT)/=NUM_NEIGH) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: invalid Gamma neighbor weights.')
++   IF (SIZE(MLWF_GM%M_matrix,1)/=NUM_BAND .OR. SIZE(MLWF_GM%M_matrix,2)/=NUM_BAND .OR. &
++       SIZE(MLWF_GM%M_matrix,3)/=NUM_NEIGH .OR. SIZE(MLWF_GM%M_matrix,4)/=1 .OR. SIZE(MLWF_GM%M_matrix,5)<ISP) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: invalid Gamma M_matrix dimensions.')
++
++   ALLOCATE(M_GM_ACTIVE(NUM_BAND,NUM_BAND,NUM_NEIGH))
++   M_GM_ACTIVE=MLWF_GM%M_matrix(:,:,1:NUM_NEIGH,1,ISP)
++
++   ALLOCATE(S_GM_DISENT(NUM_BAND,NUM_WANN))
++   S_GM_DISENT=CMPLX(0.0_q,0.0_q,q)
++
++   IF (IO%IU0>=0) THEN
++      WRITE(IO%IU0,*) '========== GAMMA SMV DISENTANGLEMENT =========='
++      WRITE(IO%IU0,'(A,4I8)') 'NUM_OUTER / N_WANNS / NUM_INNER / NUM_SELECT: ',NUM_OUTER,NUM_WANN,NUM_INNER,NUM_SELECT
++      WRITE(IO%IU0,'(A,I8)') 'dis_num_iter: ',DIS_NUM_ITER
++      WRITE(IO%IU0,'(A,F12.6)') 'dis_mix_ratio: ',DIS_MIX_RATIO
++      WRITE(IO%IU0,'(A,I8)') 'dis_conv_window: ',DIS_CONV_WINDOW
++      WRITE(IO%IU0,'(A,ES14.5)') 'dis_conv_tol: ',DIS_CONV_TOL
++      WRITE(IO%IU0,'(A,ES14.5)') 'dis_projector_tol: ',DIS_PROJECTOR_TOL
++   ENDIF
++
++   ALLOCATE(FREE_MASK(NUM_BAND))
++   FREE_MASK=OUTER_MASK .AND. .NOT.INNER_MASK
++
++   I_INNER=0
++   DO I_BAND=1,NUM_BAND
++      IF (.NOT.INNER_MASK(I_BAND)) CYCLE
++      I_INNER=I_INNER+1
++      S_GM_DISENT(I_BAND,I_INNER)=CMPLX(1.0_q,0.0_q,q)
++   ENDDO
++
++   ALLOCATE(SELECT_MASK(NUM_BAND))
++   SELECT_MASK=.FALSE.
++
++   ! Select the lowest-energy NUM_SELECT Bloch states from FREE_MASK as the initial free part of the target subspace.
++   DO I_SELECT=1,NUM_SELECT
++      I_BAND=MINLOC(MLWF_GM%eigenvalues(:,1,ISP),DIM=1, MASK=FREE_MASK .AND. .NOT.SELECT_MASK)
++      SELECT_MASK(I_BAND)=.TRUE.
++      S_GM_DISENT(I_BAND,NUM_INNER+I_SELECT)=CMPLX(1.0_q,0.0_q,q)
++   ENDDO
++
++   IF (NUM_SELECT==0) THEN
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma SMV: skipped because NUM_SELECT = 0.'
++   ELSEIF (NUM_SELECT==NUM_FREE) THEN
++      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma SMV: skipped because NUM_SELECT = NUM_FREE.'
++   ELSE
++      ALLOCATE(S_NEW(NUM_BAND,NUM_WANN))
++      ALLOCATE(P_OLD(NUM_BAND,NUM_BAND),P_NEW(NUM_BAND,NUM_BAND))
++      ALLOCATE(Z_NEW(NUM_BAND,NUM_BAND),Z_MIXED(NUM_BAND,NUM_BAND))
++      ALLOCATE(Z_FREE(NUM_FREE,NUM_FREE))
++      ALLOCATE(EIGENVALUE(NUM_FREE))
++
++      LWORK=MAX(1,2*NUM_FREE-1)
++      ALLOCATE(WORK(LWORK),RWORK(MAX(1,3*NUM_FREE-2)))
++
++      P_OLD=MATMUL(S_GM_DISENT,CONJG(TRANSPOSE(S_GM_DISENT)))
++      OMEGA_OLD=CALC_OMEGA_I(S_GM_DISENT,M_GM_ACTIVE,MLWF_GM%WB_OUT(1:NUM_NEIGH))
++      Z_MIXED=CMPLX(0.0_q,0.0_q,q)
++      CONV_COUNT=0
++      CONVERGED=.FALSE.
++
++      IF (IO%IU0>=0) WRITE(IO%IU0,'(A,ES22.12)') 'initial Omega_I: ',OMEGA_OLD
++
++      smv_iter: DO ITER=1,DIS_NUM_ITER
++         Z_NEW=CMPLX(0.0_q,0.0_q,q)
++
++         DO I_NEIGH=1,NUM_NEIGH
++            Z_NEW=Z_NEW+MLWF_GM%WB_OUT(I_NEIGH)*MATMUL(M_GM_ACTIVE(:,:,I_NEIGH), &
++                  MATMUL(P_OLD,CONJG(TRANSPOSE(M_GM_ACTIVE(:,:,I_NEIGH)))))
++         ENDDO
++         ! Explicitly Hermitize Z_NEW to remove small anti-Hermitian round-off errors before diagonalization.
++         Z_NEW=0.5_q*(Z_NEW+CONJG(TRANSPOSE(Z_NEW)))
++
++         IF (ITER==1) THEN
++            Z_MIXED=Z_NEW
++         ELSE
++            Z_MIXED=DIS_MIX_RATIO*Z_NEW+(1.0_q-DIS_MIX_RATIO)*Z_MIXED
++         ENDIF
++
++         I_FREE=0
++         DO I_BAND=1,NUM_BAND
++            IF (.NOT.FREE_MASK(I_BAND)) CYCLE
++            I_FREE=I_FREE+1
++            Z_FREE(:,I_FREE)=PACK(Z_MIXED(:,I_BAND),FREE_MASK)
++         ENDDO
++         Z_FREE=0.5_q*(Z_FREE+CONJG(TRANSPOSE(Z_FREE)))
++         CALL ZHEEV('V','U',NUM_FREE,Z_FREE,NUM_FREE,EIGENVALUE,WORK,LWORK,RWORK,EIG_INFO)
++
++         IF (EIG_INFO/=0) &
++            CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: ZHEEV failed in the SMV iteration.')
++
++         S_NEW=CMPLX(0.0_q,0.0_q,q)
++         I_INNER=0
++         DO I_BAND=1,NUM_BAND
++            IF (.NOT.INNER_MASK(I_BAND)) CYCLE
++            I_INNER=I_INNER+1
++            S_NEW(I_BAND,I_INNER)=CMPLX(1.0_q,0.0_q,q)
++         ENDDO
++         DO I_SELECT=1,NUM_SELECT
++            I_EIG=NUM_FREE-NUM_SELECT+I_SELECT
++            S_NEW(:,NUM_INNER+I_SELECT)=UNPACK(Z_FREE(:,I_EIG),FREE_MASK,CMPLX(0.0_q,0.0_q,q))
++         ENDDO
++
++         P_NEW=MATMUL(S_NEW,CONJG(TRANSPOSE(S_NEW)))
++         OMEGA_NEW=CALC_OMEGA_I(S_NEW,M_GM_ACTIVE,MLWF_GM%WB_OUT(1:NUM_NEIGH))
++         DELTA_OMEGA=ABS(OMEGA_NEW-OMEGA_OLD)
++         DELTA_PROJECTOR=SQRT(SUM(ABS(P_NEW-P_OLD)**2))
++
++         IF (IO%IU0>=0) WRITE(IO%IU0,'(A,I5,A,ES22.12,A,ES13.5,A,ES13.5)') &
++            'SMV iter: ',ITER,'  Omega_I: ',OMEGA_NEW,'  Delta Omega_I: ',DELTA_OMEGA,'  Delta P: ',DELTA_PROJECTOR
++
++         IF (DELTA_OMEGA<DIS_CONV_TOL .AND. DELTA_PROJECTOR<DIS_PROJECTOR_TOL) THEN
++            CONV_COUNT=CONV_COUNT+1
++         ELSE
++            CONV_COUNT=0
++         ENDIF
++
++         S_GM_DISENT=S_NEW
++         P_OLD=P_NEW
++         OMEGA_OLD=OMEGA_NEW
++
++         IF (CONV_COUNT>=DIS_CONV_WINDOW) THEN
++            CONVERGED=.TRUE.
++            EXIT smv_iter
++         ENDIF
++      ENDDO smv_iter
++
++      IF (.NOT.CONVERGED) THEN
++         CALL vtutor%alert('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: SMV iteration did not reach the requested convergence window.')
++      ENDIF
++
++      ALLOCATE(ORTH_CHECK(NUM_WANN,NUM_WANN))
++      ORTH_CHECK=MATMUL(CONJG(TRANSPOSE(S_GM_DISENT)),S_GM_DISENT)
++      DO I_WANN=1,NUM_WANN
++         ORTH_CHECK(I_WANN,I_WANN)=ORTH_CHECK(I_WANN,I_WANN)-CMPLX(1.0_q,0.0_q,q)
++      ENDDO
++      ORTH_ERROR=SQRT(SUM(ABS(ORTH_CHECK)**2))
++      FROZEN_ERROR=0.0_q
++      DO I_BAND=1,NUM_BAND
++         IF (.NOT.INNER_MASK(I_BAND)) CYCLE
++         FROZEN_ERROR=MAX(FROZEN_ERROR,SQRT(MAX(0.0_q,1.0_q-REAL(P_OLD(I_BAND,I_BAND),q))))
++      ENDDO
++      IF (IO%IU0>=0) THEN
++         WRITE(IO%IU0,'(A,ES22.12)') 'final Omega_I: ',OMEGA_OLD
++         WRITE(IO%IU0,'(A,ES14.5)') 'S_GM_DISENT orthonormality error: ',ORTH_ERROR
++         WRITE(IO%IU0,'(A,ES14.5)') 'frozen-subspace error: ',FROZEN_ERROR
++      ENDIF
++      IF (ORTH_ERROR>1.0E-8_q) &
++         CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: S_GM_DISENT is not semi-unitary.')
++      IF (FROZEN_ERROR>1.0E-8_q) &
++         CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: frozen states are not contained in S_GM_DISENT.')
++
++   ENDIF
++
++   ALLOCATE(M_SELECTED(NUM_WANN,NUM_WANN,NUM_NEIGH))
++   DO I_NEIGH=1,NUM_NEIGH
++      M_SELECTED(:,:,I_NEIGH)=MATMUL(CONJG(TRANSPOSE(S_GM_DISENT)),MATMUL(M_GM_ACTIVE(:,:,I_NEIGH),S_GM_DISENT))
++   ENDDO
++
++   IF (ALLOCATED(FREE_MASK)) DEALLOCATE(FREE_MASK)
++   IF (ALLOCATED(SELECT_MASK)) DEALLOCATE(SELECT_MASK)
++   IF (ALLOCATED(M_GM_ACTIVE)) DEALLOCATE(M_GM_ACTIVE)
++   IF (ALLOCATED(S_NEW)) DEALLOCATE(S_NEW)
++   IF (ALLOCATED(P_OLD)) DEALLOCATE(P_OLD)
++   IF (ALLOCATED(P_NEW)) DEALLOCATE(P_NEW)
++   IF (ALLOCATED(Z_NEW)) DEALLOCATE(Z_NEW)
++   IF (ALLOCATED(Z_MIXED)) DEALLOCATE(Z_MIXED)
++   IF (ALLOCATED(Z_FREE)) DEALLOCATE(Z_FREE)
++   IF (ALLOCATED(EIGENVALUE)) DEALLOCATE(EIGENVALUE)
++   IF (ALLOCATED(WORK)) DEALLOCATE(WORK)
++   IF (ALLOCATED(RWORK)) DEALLOCATE(RWORK)
++   IF (ALLOCATED(ORTH_CHECK)) DEALLOCATE(ORTH_CHECK)
++
++ CONTAINS
++
++   FUNCTION CALC_OMEGA_I(S,M_GM_ACTIVE,WB) RESULT(OMEGA_I)
++      COMPLEX(q), INTENT(IN) :: S(:,:),M_GM_ACTIVE(:,:,:)
++      REAL(q), INTENT(IN) :: WB(:)
++
++      INTEGER :: NUM_WANN,I_NEIGH
++      REAL(q) :: OMEGA_I
++      COMPLEX(q), ALLOCATABLE :: M_SUB(:,:)
++
++      NUM_WANN=SIZE(S,2)
++      ALLOCATE(M_SUB(NUM_WANN,NUM_WANN))
++
++      OMEGA_I=0.0_q
++      DO I_NEIGH=1,SIZE(M_GM_ACTIVE,3)
++         M_SUB=MATMUL(CONJG(TRANSPOSE(S)),MATMUL(M_GM_ACTIVE(:,:,I_NEIGH),S))
++         OMEGA_I=OMEGA_I+WB(I_NEIGH)*(REAL(NUM_WANN,q)-SUM(REAL(M_SUB*CONJG(M_SUB),q)))
++      ENDDO
++      DEALLOCATE(M_SUB)
++   END FUNCTION CALC_OMEGA_I
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_DISENTANGLE
++!***********************************************************************
++!> Perform the Gamma-only complex SU(2) Jacobi localization.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_JACOBI_LOCALIZE(MLWF_GM,M_SELECTED,ISP,U_GM_JACOBI,IO)
++
++   USE base
++   USE tutor, ONLY: vtutor
++
++   IMPLICIT NONE
++
++   TYPE(MLWF_type), INTENT(IN) :: MLWF_GM
++   COMPLEX(q), INTENT(IN) :: M_SELECTED(:,:,:)
++   INTEGER, INTENT(IN) :: ISP
++   COMPLEX(q), ALLOCATABLE, INTENT(OUT) :: U_GM_JACOBI(:,:)
++   TYPE(in_struct), INTENT(IN) :: IO
++
++   INTEGER :: NUM_WANN,NUM_NEIGH,ITER,MAX_ITER,M,N,B,J_IDX,MAX_IDX
++   REAL(q) :: CONV_TOL,DELTA_SPREAD,SPREAD_OLD,SPREAD_NEW
++   REAL(q) :: W_MAT(3,3),A_PRIME(3,3),M_SYS(3,3),CROSS_VEC(3,3)
++   REAL(q) :: P1,P2_PRIME,P3_PRIME,Q_CAR,X_CAR,THETA_ROOT,LAMBDA_MAX
++   REAL(q) :: MAX_NORM,NORM_VAL,C_HALF,U_MAX(3)
++
++   COMPLEX(q) :: M_VEC(3)
++   COMPLEX(q) :: M11,M22,M12,M21,T11,T12,T21,T22
++   COMPLEX(q) :: Z_COMP,V11,V12,V21,V22
++   COMPLEX(q) :: UJM,UJN,MMJ,MNJ,MJM,MJN
++   COMPLEX(q), ALLOCATABLE :: M_LOC(:,:,:),U_LOC(:,:)
++
++   NUM_WANN = MLWF_GM%NUM_WANN
++   NUM_NEIGH    = MLWF_GM%NNTOT
++
++   MAX_ITER = 300
++   CONV_TOL = 1.0E-8_q
++
++   IF (SIZE(M_SELECTED,1)/=NUM_WANN .OR. SIZE(M_SELECTED,2)/=NUM_WANN .OR. SIZE(M_SELECTED,3)/=NUM_NEIGH) THEN
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_JACOBI: invalid selected-overlap dimensions.')
++   ENDIF
++
++   IF (.NOT.ALLOCATED(MLWF_GM%WB_OUT)) THEN
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_JACOBI: WB_OUT is not allocated.')
++   ENDIF
++
++   IF (SIZE(MLWF_GM%WB_OUT)<NUM_NEIGH) THEN
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_JACOBI: invalid WB_OUT dimensions.')
++   ENDIF
++
++   IF (ISP<1 .OR. ISP>MLWF_GM%ISPIN) THEN
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_JACOBI: invalid spin channel.')
++   ENDIF
++
++   ALLOCATE(M_LOC(NUM_WANN,NUM_WANN,NUM_NEIGH))
++   ALLOCATE(U_LOC(NUM_WANN,NUM_WANN))
++   ALLOCATE(U_GM_JACOBI(NUM_WANN,NUM_WANN))
++   M_LOC=M_SELECTED
++
++   U_LOC = CMPLX(0.0_q,0.0_q,q)
++
++   DO M = 1, NUM_WANN
++      U_LOC(M,M) = CMPLX(1.0_q,0.0_q,q)
++   ENDDO
++
++   IF (IO%IU0 >= 0) THEN
++      WRITE(IO%IU0,*) '========== STARTING SU(2) TENSOR JACOBI =========='
++      WRITE(IO%IU0,*) 'Collinear spin channel ISP = ',ISP
++   ENDIF
++
++   SPREAD_OLD = 1.0E10_q
++
++   jacobi_iteration: DO ITER = 1, MAX_ITER
++
++      band_m_loop: DO M = 1, NUM_WANN-1
++         band_n_loop: DO N = M+1, NUM_WANN
++
++            ! Build the real symmetric pseudospin inertia tensor.
++            W_MAT = 0.0_q
++
++            DO B = 1, NUM_NEIGH
++               M11 = M_LOC(M,M,B)
++               M22 = M_LOC(N,N,B)
++               M12 = M_LOC(M,N,B)
++               M21 = M_LOC(N,M,B)
++
++               M_VEC(1) = 0.5_q*(M12+M21)
++               M_VEC(2) = CMPLX(0.0_q,0.5_q,q)*(M12-M21)
++               M_VEC(3) = 0.5_q*(M11-M22)
++
++               W_MAT(1,1) = W_MAT(1,1) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(1)*CONJG(M_VEC(1)),q)
++               W_MAT(2,2) = W_MAT(2,2) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(2)*CONJG(M_VEC(2)),q)
++               W_MAT(3,3) = W_MAT(3,3) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(3)*CONJG(M_VEC(3)),q)
++
++               W_MAT(1,2) = W_MAT(1,2) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(1)*CONJG(M_VEC(2)),q)
++               W_MAT(1,3) = W_MAT(1,3) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(1)*CONJG(M_VEC(3)),q)
++               W_MAT(2,3) = W_MAT(2,3) + MLWF_GM%WB_OUT(B)*REAL(M_VEC(2)*CONJG(M_VEC(3)),q)
++            ENDDO
++
++            W_MAT(2,1) = W_MAT(1,2)
++            W_MAT(3,1) = W_MAT(1,3)
++            W_MAT(3,2) = W_MAT(2,3)
++
++            ! Solve the largest eigenpair of the real symmetric 3x3 tensor.
++            P1 = W_MAT(1,1)+W_MAT(2,2)+W_MAT(3,3)
++
++            A_PRIME = W_MAT
++            A_PRIME(1,1) = A_PRIME(1,1)-P1/3.0_q
++            A_PRIME(2,2) = A_PRIME(2,2)-P1/3.0_q
++            A_PRIME(3,3) = A_PRIME(3,3)-P1/3.0_q
++
++            P2_PRIME = 0.5_q*(A_PRIME(1,1)**2+A_PRIME(2,2)**2+A_PRIME(3,3)**2) + &
++                       A_PRIME(1,2)**2+A_PRIME(1,3)**2+A_PRIME(2,3)**2
++
++            IF (P2_PRIME < 1.0E-20_q) THEN
++               U_MAX = (/0.0_q,0.0_q,1.0_q/)
++            ELSE
++               P3_PRIME = A_PRIME(1,1)*(A_PRIME(2,2)*A_PRIME(3,3)-A_PRIME(2,3)**2) - &
++                          A_PRIME(1,2)*(A_PRIME(1,2)*A_PRIME(3,3)-A_PRIME(1,3)*A_PRIME(2,3)) + &
++                          A_PRIME(1,3)*(A_PRIME(1,2)*A_PRIME(2,3)-A_PRIME(1,3)*A_PRIME(2,2))
++
++               Q_CAR = SQRT(P2_PRIME/3.0_q)
++               X_CAR = P3_PRIME/(2.0_q*Q_CAR**3)
++               X_CAR = MAX(-1.0_q,MIN(1.0_q,X_CAR))
++               THETA_ROOT = ACOS(X_CAR)/3.0_q
++               LAMBDA_MAX = P1/3.0_q+2.0_q*Q_CAR*COS(THETA_ROOT)
++
++               M_SYS = W_MAT
++               M_SYS(1,1) = M_SYS(1,1)-LAMBDA_MAX
++               M_SYS(2,2) = M_SYS(2,2)-LAMBDA_MAX
++               M_SYS(3,3) = M_SYS(3,3)-LAMBDA_MAX
++
++               CROSS_VEC(1,1) = M_SYS(1,2)*M_SYS(2,3)-M_SYS(1,3)*M_SYS(2,2)
++               CROSS_VEC(2,1) = M_SYS(1,3)*M_SYS(2,1)-M_SYS(1,1)*M_SYS(2,3)
++               CROSS_VEC(3,1) = M_SYS(1,1)*M_SYS(2,2)-M_SYS(1,2)*M_SYS(2,1)
++
++               CROSS_VEC(1,2) = M_SYS(2,2)*M_SYS(3,3)-M_SYS(2,3)*M_SYS(3,2)
++               CROSS_VEC(2,2) = M_SYS(2,3)*M_SYS(3,1)-M_SYS(2,1)*M_SYS(3,3)
++               CROSS_VEC(3,2) = M_SYS(2,1)*M_SYS(3,2)-M_SYS(2,2)*M_SYS(3,1)
++
++               CROSS_VEC(1,3) = M_SYS(3,2)*M_SYS(1,3)-M_SYS(3,3)*M_SYS(1,2)
++               CROSS_VEC(2,3) = M_SYS(3,3)*M_SYS(1,1)-M_SYS(3,1)*M_SYS(1,3)
++               CROSS_VEC(3,3) = M_SYS(3,1)*M_SYS(1,2)-M_SYS(3,2)*M_SYS(1,1)
++
++               MAX_NORM = 0.0_q
++               MAX_IDX  = 1
++
++               DO J_IDX = 1, 3
++                  NORM_VAL = CROSS_VEC(1,J_IDX)**2+CROSS_VEC(2,J_IDX)**2+CROSS_VEC(3,J_IDX)**2
++
++                  IF (NORM_VAL > MAX_NORM) THEN
++                     MAX_NORM = NORM_VAL
++                     MAX_IDX  = J_IDX
++                  ENDIF
++               ENDDO
++
++               IF (MAX_NORM < 1.0E-14_q) THEN
++                  U_MAX = (/0.0_q,0.0_q,1.0_q/)
++               ELSE
++                  U_MAX(1) = CROSS_VEC(1,MAX_IDX)/SQRT(MAX_NORM)
++                  U_MAX(2) = CROSS_VEC(2,MAX_IDX)/SQRT(MAX_NORM)
++                  U_MAX(3) = CROSS_VEC(3,MAX_IDX)/SQRT(MAX_NORM)
++               ENDIF
++            ENDIF
++
++            IF (U_MAX(3) < 0.0_q) U_MAX = -U_MAX
++
++            ! Map the optimal SO(3) direction to an SU(2) rotation.
++            C_HALF = SQRT((1.0_q+U_MAX(3))/2.0_q)
++            Z_COMP = CMPLX(U_MAX(1),U_MAX(2),q)/(2.0_q*C_HALF)
++
++            V11 = CMPLX(C_HALF,0.0_q,q)
++            V22 = V11
++            V21 = Z_COMP
++            V12 = -CONJG(Z_COMP)
++
++            ! Apply V^dagger M V to every neighbor matrix.
++            DO B = 1, NUM_NEIGH
++               M11 = M_LOC(M,M,B)
++               M22 = M_LOC(N,N,B)
++               M12 = M_LOC(M,N,B)
++               M21 = M_LOC(N,M,B)
++
++               T11 = M11*V11+M12*V21
++               T12 = M11*V12+M12*V22
++               T21 = M21*V11+M22*V21
++               T22 = M21*V12+M22*V22
++
++               M_LOC(M,M,B) = CONJG(V11)*T11+CONJG(V21)*T21
++               M_LOC(M,N,B) = CONJG(V11)*T12+CONJG(V21)*T22
++               M_LOC(N,M,B) = CONJG(V12)*T11+CONJG(V22)*T21
++               M_LOC(N,N,B) = CONJG(V12)*T12+CONJG(V22)*T22
++
++               DO J_IDX = 1, NUM_WANN
++                  IF (J_IDX == M .OR. J_IDX == N) CYCLE
++
++                  MMJ = M_LOC(M,J_IDX,B)
++                  MNJ = M_LOC(N,J_IDX,B)
++
++                  M_LOC(M,J_IDX,B) = CONJG(V11)*MMJ+CONJG(V21)*MNJ
++                  M_LOC(N,J_IDX,B) = CONJG(V12)*MMJ+CONJG(V22)*MNJ
++
++                  MJM = M_LOC(J_IDX,M,B)
++                  MJN = M_LOC(J_IDX,N,B)
++
++                  M_LOC(J_IDX,M,B) = MJM*V11+MJN*V21
++                  M_LOC(J_IDX,N,B) = MJM*V12+MJN*V22
++               ENDDO
++            ENDDO
++
++            ! Accumulate the Gamma-localization matrix.
++            DO J_IDX = 1, NUM_WANN
++               UJM = U_LOC(J_IDX,M)
++               UJN = U_LOC(J_IDX,N)
++
++               U_LOC(J_IDX,M) = UJM*V11+UJN*V21
++               U_LOC(J_IDX,N) = UJM*V12+UJN*V22
++            ENDDO
++
++         ENDDO band_n_loop
++      ENDDO band_m_loop
++
++      SPREAD_NEW = 0.0_q
++
++      DO B = 1, NUM_NEIGH
++         DO M = 1, NUM_WANN
++            SPREAD_NEW = SPREAD_NEW + MLWF_GM%WB_OUT(B)* &
++               (1.0_q-REAL(M_LOC(M,M,B)*CONJG(M_LOC(M,M,B)),q))
++         ENDDO
++      ENDDO
++
++      DELTA_SPREAD = ABS(SPREAD_OLD-SPREAD_NEW)
++      SPREAD_OLD = SPREAD_NEW
++
++      IF (IO%IU0 >= 0) THEN
++         WRITE(IO%IU0,'(A,I4,A,F15.8,A,E12.4)') &
++            ' ITER: ',ITER,' SPREAD: ',SPREAD_NEW,' SPREAD_DELTA: ',DELTA_SPREAD
++      ENDIF
++
++      IF (DELTA_SPREAD < CONV_TOL .AND. ITER > 1) EXIT jacobi_iteration
++
++   ENDDO jacobi_iteration
++
++   U_GM_JACOBI = U_LOC
++   DEALLOCATE(M_LOC,U_LOC)
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_JACOBI_LOCALIZE
++!***********************************************************************
++!> Build smooth pseudo Gamma Wannier orbitals in real space.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_REALSPACE_SPINOR(MLWF_GM,W_GM,ISP,U_GM,WF_SPINOR)
++
++   USE wave_high
++   USE tutor, ONLY: vtutor
++
++   IMPLICIT NONE
++
++   TYPE(MLWF_type), INTENT(IN) :: MLWF_GM
++   TYPE(wavespin), INTENT(IN) :: W_GM
++   INTEGER, INTENT(IN) :: ISP
++   COMPLEX(q), INTENT(IN) :: U_GM(:,:)
++   COMPLEX(q), ALLOCATABLE, INTENT(OUT) :: WF_SPINOR(:,:,:)
++
++   TYPE(wavefun1), ALLOCATABLE :: LOC_WK_ALL(:)
++   TYPE(wavedes1), TARGET :: LOC_WDESK
++   TYPE(wavefun1) :: LOC_WQ_TMP
++
++   COMPLEX(q), ALLOCATABLE :: PSI_GRID(:,:,:)
++
++   INTEGER :: NUM_WANN,NB_TOT,NUM_BAND,NP_GRID,MPLWV,NRSPINORS
++   INTEGER :: I_BAND,I_ACTIVE,I_WANN,ISPINOR,NPWS
++
++   NUM_WANN = MLWF_GM%NUM_WANN
++   NB_TOT = W_GM%WDES%NB_TOT
++   NUM_BAND = MLWF_GM%NB_TOT-MLWF_GM%NEXCLB
++   NP_GRID = W_GM%WDES%GRID%RL%NP
++   MPLWV = W_GM%WDES%GRID%MPLWV
++   NRSPINORS = W_GM%WDES%NRSPINORS
++
++   IF (SIZE(U_GM,1)/=NUM_BAND .OR. SIZE(U_GM,2)/=NUM_WANN) THEN
++      CALL vtutor%error('MLWF_GAMMA_BUILD_REALSPACE_ORBITALS: invalid U_GM dimensions.')
++   ENDIF
++
++   CALL SETWDES(W_GM%WDES,LOC_WDESK,1)
++
++   ALLOCATE(LOC_WK_ALL(NB_TOT))
++
++   DO I_BAND = 1, NB_TOT
++      CALL NEWWAV(LOC_WK_ALL(I_BAND),LOC_WDESK,.TRUE.)
++   ENDDO
++
++   CALL W1_GATHER_GLB_(W_GM,1,NB_TOT,ISP,LOC_WK_ALL)
++
++   ALLOCATE(PSI_GRID(NP_GRID,NRSPINORS,NUM_BAND))
++   PSI_GRID = CMPLX(0.0_q,0.0_q,q)
++
++   CALL NEWWAV(LOC_WQ_TMP,LOC_WDESK,.TRUE.)
++
++   I_ACTIVE=0
++
++   DO I_BAND=1,NB_TOT
++      IF (MLWF_GM%EXCLUDE_BAND(I_BAND)) CYCLE
++
++      I_ACTIVE=I_ACTIVE+1
++      CALL W1_COPY(LOC_WK_ALL(I_BAND),LOC_WQ_TMP)
++      CALL FFTWAV_W1(LOC_WQ_TMP)
++
++      DO ISPINOR=1,NRSPINORS
++         NPWS=(ISPINOR-1)*MPLWV
++         PSI_GRID(:,ISPINOR,I_ACTIVE)=LOC_WQ_TMP%CR(1+NPWS:NP_GRID+NPWS)
++      ENDDO
++   ENDDO
++
++   IF (I_ACTIVE/=NUM_BAND) THEN
++      CALL vtutor%error('MLWF_GAMMA_BUILD_REALSPACE_ORBITALS: inconsistent active-band count.')
++   ENDIF
++
++   CALL DELWAV(LOC_WQ_TMP,.TRUE.)
++
++   DO I_BAND = 1, NB_TOT
++      CALL DELWAV(LOC_WK_ALL(I_BAND),.TRUE.)
++   ENDDO
++
++   DEALLOCATE(LOC_WK_ALL)
++
++   ALLOCATE(WF_SPINOR(NP_GRID,NRSPINORS,NUM_WANN))
++   WF_SPINOR = CMPLX(0.0_q,0.0_q,q)
++
++   DO I_WANN = 1, NUM_WANN
++      DO I_BAND=1, NUM_BAND
++         DO ISPINOR = 1, NRSPINORS
++            WF_SPINOR(:,ISPINOR,I_WANN) = WF_SPINOR(:,ISPINOR,I_WANN) + &
++               U_GM(I_BAND,I_WANN)*PSI_GRID(:,ISPINOR,I_BAND)
++         ENDDO
++      ENDDO
++   ENDDO
++
++   DEALLOCATE(PSI_GRID)
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_REALSPACE_SPINOR
++!***********************************************************************
++!> Locate each Gamma Wannier orbital in periodic real space.
++!>
++!> Multiple seeds are screened by the minimum Fermi-envelope radius
++!> required to contain TARGET_CHARGE of the orbital density.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_LOCATE_CENTER(WF_SPINOR,WDES_GM,LATT_CUR,ISP,TAU_WANN_FRAC,IO)
++   USE base
++   USE constant
++   USE lattice
++   USE wave_high
++   USE tutor, ONLY: vtutor
++   IMPLICIT NONE
++
++   COMPLEX(q), INTENT(IN) :: WF_SPINOR(:,:,:)
++   TYPE(wavedes), INTENT(IN) :: WDES_GM
++   TYPE(latt), INTENT(IN) :: LATT_CUR
++   INTEGER, INTENT(IN) :: ISP
++   REAL(q), INTENT(OUT) :: TAU_WANN_FRAC(:,:)
++   TYPE(in_struct), INTENT(IN) :: IO
++
++   INTEGER, PARAMETER :: N_SEED_AXIS=3
++   INTEGER, PARAMETER :: MAX_CANDIDATES=1+N_SEED_AXIS**3
++   INTEGER, PARAMETER :: N_REFINED_CANDIDATES=4
++   INTEGER, PARAMETER :: MAX_CENTER_ITER=100
++   INTEGER, PARAMETER :: MAX_BACKTRACK=20
++   INTEGER, PARAMETER :: RADIUS_BISECT_ITER=32
++   INTEGER, PARAMETER :: LATTICE_SEARCH_RANGE=2
++
++   REAL(q), PARAMETER :: TARGET_CHARGE=0.87_q
++   REAL(q), PARAMETER :: SEARCH_MARGIN_GRID_STEPS=6.0_q
++   REAL(q), PARAMETER :: RADIUS_WARNING_FRACTION=0.80_q
++   REAL(q), PARAMETER :: SMEAR_RADIUS_FRACTION=0.04_q
++   REAL(q), PARAMETER :: CENTER_CONV_TOL=1.0E-7_q
++   REAL(q), PARAMETER :: RADIUS_TIE_TOL=1.0E-7_q
++
++   INTEGER :: NP_GRID,NRSPINORS,NUM_WANN,NX,NY,NZ
++   INTEGER :: IW,ISPINOR,IND_G,N1,N2,N3,I1,I2,I3
++   INTEGER :: I_CANDIDATE,I_ORDER,N_CANDIDATE,N_VALID,N_REFINED
++   INTEGER :: ITER,BACKTRACK,SEED_STRIDE,TEMP_INDEX
++   REAL(q) :: RHO_MAX,GRID_STEP,SHORTEST_TRANSLATION,R_INJECT,R_COVER,R_SEARCH_MAX
++   REAL(q), PARAMETER :: SMEAR_GRID_FRACTION=0.20_q
++   REAL(q) :: TRANSLATION(3),TRANSLATION_NORM
++   REAL(q) :: GRID_FRAC_COVER(3),DELTA_CART_COVER(3),DISTANCE_COVER
++   REAL(q) :: SEED(3),CENTER(3),TRIAL_CENTER(3),BEST_CENTER(3)
++   REAL(q) :: SHIFT_CART(3),TRIAL_SHIFT_CART(3)
++   REAL(q) :: RADIUS,TRIAL_RADIUS,BEST_RADIUS
++   REAL(q) :: SMEAR,TRIAL_SMEAR,BEST_SMEAR
++   REAL(q) :: CHARGE_FRACTION,TRIAL_CHARGE_FRACTION,BEST_CHARGE_FRACTION
++   REAL(q) :: SECOND_MOMENT,TRIAL_SECOND_MOMENT,BEST_SECOND_MOMENT
++   REAL(q) :: SHIFT_NORM,TRIAL_SHIFT_NORM,STEP_SCALE,RADIUS_ACCEPT_TOL
++   LOGICAL :: VALID,TRIAL_VALID,ACCEPTED,CONVERGED,BEST_CONVERGED
++
++   REAL(q), ALLOCATABLE :: RHO_GRID(:)
++   REAL(q), ALLOCATABLE :: SEED_FRAC(:,:),SCREEN_RADIUS(:)
++   REAL(q), ALLOCATABLE :: SAMPLE_RHO(:),SAMPLE_DISTANCE(:),SAMPLE_DELTA_CART(:,:)
++   INTEGER, ALLOCATABLE :: CANDIDATE_ORDER(:)
++   LOGICAL, ALLOCATABLE :: SCREEN_VALID(:)
++
++   NP_GRID=SIZE(WF_SPINOR,1)
++   NRSPINORS=SIZE(WF_SPINOR,2)
++   NUM_WANN=SIZE(WF_SPINOR,3)
++
++   IF (NP_GRID/=WDES_GM%GRID%RL%NP) THEN
++      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid real-space grid size.')
++   ENDIF
++
++   IF (NRSPINORS/=1 .AND. NRSPINORS/=2) THEN
++      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid NRSPINORS.')
++   ENDIF
++
++   IF (SIZE(TAU_WANN_FRAC,1)/=3 .OR. SIZE(TAU_WANN_FRAC,2)/=NUM_WANN) THEN
++      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid TAU_WANN_FRAC dimensions.')
++   ENDIF
++
++   NX=WDES_GM%GRID%NGX
++   NY=WDES_GM%GRID%NGY
++   NZ=WDES_GM%GRID%NGZ
++
++   GRID_STEP=MAX(SQRT(SUM((LATT_CUR%A(:,1)/REAL(NX,q))**2)), &
++                 SQRT(SUM((LATT_CUR%A(:,2)/REAL(NY,q))**2)), &
++                 SQRT(SUM((LATT_CUR%A(:,3)/REAL(NZ,q))**2)))
++
++   SHORTEST_TRANSLATION=HUGE(1.0_q)
++
++   DO I1=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
++      DO I2=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
++         DO I3=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
++            IF (I1==0 .AND. I2==0 .AND. I3==0) CYCLE
++
++            TRANSLATION=REAL(I1,q)*LATT_CUR%A(:,1)+REAL(I2,q)*LATT_CUR%A(:,2)+REAL(I3,q)*LATT_CUR%A(:,3)
++            TRANSLATION_NORM=SQRT(SUM(TRANSLATION**2))
++            SHORTEST_TRANSLATION=MIN(SHORTEST_TRANSLATION,TRANSLATION_NORM)
++         ENDDO
++      ENDDO
++   ENDDO
++
++   R_INJECT=0.5_q*SHORTEST_TRANSLATION
++   R_COVER=0.0_q
++   CENTER=0.0_q
++
++   DO N3=0,NZ-1
++      DO N2=0,NY-1
++         DO N1=0,NX-1
++            IND_G=N1+N2*NX+N3*NX*NY+1
++            IF (IND_G>NP_GRID) CYCLE
++
++            GRID_FRAC_COVER=(/REAL(N1,q)/REAL(NX,q),REAL(N2,q)/REAL(NY,q),REAL(N3,q)/REAL(NZ,q)/)
++            CALL MINIMUM_IMAGE(GRID_FRAC_COVER,CENTER,DELTA_CART_COVER,DISTANCE_COVER)
++            R_COVER=MAX(R_COVER,DISTANCE_COVER)
++         ENDDO
++      ENDDO
++   ENDDO
++
++   R_SEARCH_MAX=R_COVER+SEARCH_MARGIN_GRID_STEPS*GRID_STEP
++   SEED_STRIDE=MAX(1,MIN(NX,NY,NZ)/20)
++
++   ALLOCATE(RHO_GRID(NP_GRID))
++   ALLOCATE(SEED_FRAC(3,MAX_CANDIDATES),SCREEN_RADIUS(MAX_CANDIDATES))
++   ALLOCATE(CANDIDATE_ORDER(MAX_CANDIDATES),SCREEN_VALID(MAX_CANDIDATES))
++   ALLOCATE(SAMPLE_RHO(NP_GRID),SAMPLE_DISTANCE(NP_GRID),SAMPLE_DELTA_CART(3,NP_GRID))
++
++   TAU_WANN_FRAC=0.0_q
++
++   IF (IO%IU0>=0) THEN
++      WRITE(IO%IU0,*) '========== PERIODIC FERMI CENTER SEARCH =========='
++      WRITE(IO%IU0,'(A,F10.6)') 'target charge fraction: ',TARGET_CHARGE
++      WRITE(IO%IU0,'(A,F12.6)') 'maximum real-space grid step: ',GRID_STEP
++      WRITE(IO%IU0,'(A,F12.6)') 'shortest lattice translation: ',SHORTEST_TRANSLATION
++      WRITE(IO%IU0,'(A,F12.6)') 'injectivity radius: ',R_INJECT
++      WRITE(IO%IU0,'(A,F12.6)') 'WS covering radius: ',R_COVER
++      WRITE(IO%IU0,'(A,F12.6)') 'maximum searched radius: ',R_SEARCH_MAX
++      WRITE(IO%IU0,'(A,I6)') 'coarse seed-grid stride: ',SEED_STRIDE
++   ENDIF
++
++   wannier_loop: DO IW=1,NUM_WANN
++      RHO_GRID=0.0_q
++
++      DO ISPINOR=1,NRSPINORS
++         RHO_GRID=RHO_GRID+REAL(WF_SPINOR(:,ISPINOR,IW)*CONJG(WF_SPINOR(:,ISPINOR,IW)),q)
++      ENDDO
++
++      RHO_MAX=MAXVAL(RHO_GRID)
++      IND_G=MAXLOC(RHO_GRID,DIM=1)
++      N3=(IND_G-1)/(NX*NY)
++      N2=((IND_G-1)-N3*NX*NY)/NX
++      N1=IND_G-1-N2*NX-N3*NX*NY
++
++      N_CANDIDATE=0
++      SEED=(/REAL(N1,q)/REAL(NX,q),REAL(N2,q)/REAL(NY,q),REAL(N3,q)/REAL(NZ,q)/)
++      CALL ADD_SEED(SEED)
++
++      DO I3=0,N_SEED_AXIS-1
++         DO I2=0,N_SEED_AXIS-1
++            DO I1=0,N_SEED_AXIS-1
++               SEED=(/ (REAL(I1,q)+0.5_q)/REAL(N_SEED_AXIS,q), &
++                        (REAL(I2,q)+0.5_q)/REAL(N_SEED_AXIS,q), &
++                        (REAL(I3,q)+0.5_q)/REAL(N_SEED_AXIS,q) /)
++               CALL ADD_SEED(SEED)
++            ENDDO
++         ENDDO
++      ENDDO
++
++      SCREEN_RADIUS=HUGE(1.0_q)
++      SCREEN_VALID=.FALSE.
++
++      DO I_CANDIDATE=1,N_CANDIDATE
++         CALL EVALUATE_CENTER(SEED_FRAC(:,I_CANDIDATE),SEED_STRIDE,RADIUS,SMEAR,SHIFT_CART, &
++                              CHARGE_FRACTION,SECOND_MOMENT,VALID)
++
++         SCREEN_RADIUS(I_CANDIDATE)=RADIUS
++         SCREEN_VALID(I_CANDIDATE)=VALID
++         CANDIDATE_ORDER(I_CANDIDATE)=I_CANDIDATE
++
++         ! IF (IO%IU0>=0) THEN
++         !    IF (VALID) THEN
++         !       WRITE(IO%IU0,'(A,I4,A,3F10.6,A,F11.6,A,F10.6)') 'WF ',IW,' seed: ',SEED_FRAC(:,I_CANDIDATE), &
++         !          '  coarse radius: ',RADIUS,'  charge: ',CHARGE_FRACTION
++         !    ELSE
++         !       WRITE(IO%IU0,'(A,I4,A,3F10.6,A,F10.6)') 'WF ',IW,' seed: ',SEED_FRAC(:,I_CANDIDATE), &
++         !          '  invalid, maximum captured charge: ',CHARGE_FRACTION
++         !    ENDIF
++         ! ENDIF
++
++      ENDDO
++
++      N_VALID=COUNT(SCREEN_VALID(1:N_CANDIDATE))
++
++      IF (N_VALID==0) THEN
++         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: no seed can contain the target charge inside the searched radius.')
++      ENDIF
++
++      DO I_ORDER=2,N_CANDIDATE
++         TEMP_INDEX=CANDIDATE_ORDER(I_ORDER)
++         I_CANDIDATE=I_ORDER-1
++
++         DO WHILE (I_CANDIDATE>=1)
++            IF (SCREEN_RADIUS(CANDIDATE_ORDER(I_CANDIDATE))<=SCREEN_RADIUS(TEMP_INDEX)) EXIT
++            CANDIDATE_ORDER(I_CANDIDATE+1)=CANDIDATE_ORDER(I_CANDIDATE)
++            I_CANDIDATE=I_CANDIDATE-1
++         ENDDO
++
++         CANDIDATE_ORDER(I_CANDIDATE+1)=TEMP_INDEX
++      ENDDO
++
++      BEST_RADIUS=HUGE(1.0_q)
++      BEST_SECOND_MOMENT=HUGE(1.0_q)
++      BEST_SMEAR=0.0_q
++      BEST_CHARGE_FRACTION=0.0_q
++      BEST_CENTER=0.0_q
++      BEST_CONVERGED=.FALSE.
++      N_REFINED=0
++
++      refine_candidates: DO I_ORDER=1,N_CANDIDATE
++         I_CANDIDATE=CANDIDATE_ORDER(I_ORDER)
++         IF (.NOT.SCREEN_VALID(I_CANDIDATE)) CYCLE
++
++         N_REFINED=N_REFINED+1
++         IF (N_REFINED>N_REFINED_CANDIDATES) EXIT refine_candidates
++
++         CENTER=SEED_FRAC(:,I_CANDIDATE)
++         CALL EVALUATE_CENTER(CENTER,1,RADIUS,SMEAR,SHIFT_CART,CHARGE_FRACTION,SECOND_MOMENT,VALID)
++         IF (.NOT.VALID) CYCLE
++
++         CONVERGED=.FALSE.
++
++         center_iteration: DO ITER=1,MAX_CENTER_ITER
++            SHIFT_NORM=SQRT(SUM(SHIFT_CART**2))
++
++            ! IF (IO%IU0>=0) THEN
++            !    WRITE(IO%IU0,'(A,I4,A,I4,A,F11.6,A,ES12.4,A,F10.6)') 'WF ',IW,' candidate ',N_REFINED, &
++            !       '  radius: ',RADIUS,'  shift: ',SHIFT_NORM,'  charge: ',CHARGE_FRACTION
++            ! ENDIF
++
++            IF (SHIFT_NORM<CENTER_CONV_TOL) THEN
++               CONVERGED=.TRUE.
++               EXIT center_iteration
++            ENDIF
++
++            STEP_SCALE=1.0_q
++            ACCEPTED=.FALSE.
++            RADIUS_ACCEPT_TOL=1.0E-9_q*MAX(1.0_q,RADIUS)
++
++            DO BACKTRACK=1,MAX_BACKTRACK
++               DO I1=1,3
++                  TRIAL_CENTER(I1)=CENTER(I1)+STEP_SCALE*DOT_PRODUCT(LATT_CUR%B(:,I1),SHIFT_CART)/TPI
++               ENDDO
++
++               TRIAL_CENTER=MOD(TRIAL_CENTER+10.0_q,1.0_q)
++               CALL EVALUATE_CENTER(TRIAL_CENTER,1,TRIAL_RADIUS,TRIAL_SMEAR,TRIAL_SHIFT_CART, &
++                                    TRIAL_CHARGE_FRACTION,TRIAL_SECOND_MOMENT,TRIAL_VALID)
++
++               TRIAL_SHIFT_NORM=SQRT(SUM(TRIAL_SHIFT_CART**2))
++               IF (TRIAL_VALID .AND. (TRIAL_SHIFT_NORM<SHIFT_NORM .OR. TRIAL_RADIUS<=RADIUS+RADIUS_ACCEPT_TOL)) THEN
++                  ACCEPTED=.TRUE.
++                  EXIT
++               ENDIF
++
++               STEP_SCALE=0.5_q*STEP_SCALE
++            ENDDO
++            ! IF (ACCEPTED .AND. IO%IU0>=0) THEN
++            !    WRITE(IO%IU0,'(A,F12.8,A,ES13.5,A,ES13.5)') 'accepted scale: ',STEP_SCALE, &
++            !       '  Cartesian displacement: ',STEP_SCALE*SHIFT_NORM,'  new shift: ',TRIAL_SHIFT_NORM
++            ! ENDIF
++            IF (.NOT.ACCEPTED .AND. IO%IU0>=0) THEN
++               WRITE(IO%IU0,'(A,I4,A,I4,A,ES13.5)') 'WF ',IW,' candidate ',N_REFINED, &
++                  ' stopped because backtracking failed; current shift: ',SHIFT_NORM
++            ENDIF
++            IF (.NOT.ACCEPTED) EXIT center_iteration
++
++            CENTER=TRIAL_CENTER
++            RADIUS=TRIAL_RADIUS
++            SMEAR=TRIAL_SMEAR
++            SHIFT_CART=TRIAL_SHIFT_CART
++            CHARGE_FRACTION=TRIAL_CHARGE_FRACTION
++            SECOND_MOMENT=TRIAL_SECOND_MOMENT
++         ENDDO center_iteration
++
++         IF (IO%IU0>=0) THEN
++            WRITE(IO%IU0,'(A,I4,A,I4,A,L2,A,3F11.7,A,F11.6,A,F11.6)') 'WF ',IW,' candidate ',N_REFINED, &
++               '  converged: ',CONVERGED,'  center: ',CENTER,'  radius: ',RADIUS,'  moment: ',SECOND_MOMENT
++         ENDIF
++
++         IF (CONVERGED .AND. .NOT.BEST_CONVERGED) THEN
++            BEST_CONVERGED=.TRUE.
++            BEST_CENTER=CENTER
++            BEST_RADIUS=RADIUS
++            BEST_SMEAR=SMEAR
++            BEST_CHARGE_FRACTION=CHARGE_FRACTION
++            BEST_SECOND_MOMENT=SECOND_MOMENT
++         ELSEIF (CONVERGED .EQV. BEST_CONVERGED) THEN
++            IF (RADIUS<BEST_RADIUS-RADIUS_TIE_TOL .OR. &
++                (ABS(RADIUS-BEST_RADIUS)<=RADIUS_TIE_TOL .AND. SECOND_MOMENT<BEST_SECOND_MOMENT)) THEN
++               BEST_CENTER=CENTER
++               BEST_RADIUS=RADIUS
++               BEST_SMEAR=SMEAR
++               BEST_CHARGE_FRACTION=CHARGE_FRACTION
++               BEST_SECOND_MOMENT=SECOND_MOMENT
++            ENDIF
++         ENDIF
++      ENDDO refine_candidates
++
++      IF (BEST_RADIUS==HUGE(1.0_q)) THEN
++         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: all refined center candidates failed.')
++      ENDIF
++
++      TAU_WANN_FRAC(:,IW)=BEST_CENTER-REAL(NINT(BEST_CENTER),q)
++
++      IF (IO%IU0>=0) THEN
++         WRITE(IO%IU0,*) '========== SELECTED FERMI CENTER =========='
++         WRITE(IO%IU0,'(A,I5,A,I4)') 'ISP: ',ISP,'  Wannier orbital: ',IW
++         WRITE(IO%IU0,'(A,3F16.9)') 'fractional center: ',TAU_WANN_FRAC(:,IW)
++         WRITE(IO%IU0,'(A,3F16.9)') 'Cartesian center: ',MATMUL(LATT_CUR%A,TAU_WANN_FRAC(:,IW))
++         WRITE(IO%IU0,'(A,F14.8)') 'selected radius: ',BEST_RADIUS
++         WRITE(IO%IU0,'(A,F14.8)') 'selected smear: ',BEST_SMEAR
++         WRITE(IO%IU0,'(A,F14.8)') 'captured charge fraction: ',BEST_CHARGE_FRACTION
++         WRITE(IO%IU0,'(A,F14.8)') 'Fermi-weighted second moment: ',BEST_SECOND_MOMENT
++         WRITE(IO%IU0,'(A,L2)') 'selected candidate converged: ',BEST_CONVERGED
++
++         IF (BEST_RADIUS>RADIUS_WARNING_FRACTION*R_COVER) THEN
++            WRITE(IO%IU0,*) 'WARNING: selected center radius is close to the WS covering radius.'
++         ENDIF
++      ENDIF
++   ENDDO wannier_loop
++
++   DEALLOCATE(RHO_GRID,SEED_FRAC,SCREEN_RADIUS,CANDIDATE_ORDER,SCREEN_VALID)
++   DEALLOCATE(SAMPLE_RHO,SAMPLE_DISTANCE,SAMPLE_DELTA_CART)
++
++ CONTAINS
++
++   SUBROUTINE ADD_SEED(SEED_INPUT)
++      REAL(q), INTENT(IN) :: SEED_INPUT(3)
++
++      INTEGER :: I_SEED
++      REAL(q) :: SEED_FOLDED(3),DELTA_CART(3),DISTANCE
++
++      SEED_FOLDED=MOD(SEED_INPUT+10.0_q,1.0_q)
++
++      DO I_SEED=1,N_CANDIDATE
++         CALL MINIMUM_IMAGE(SEED_FOLDED,SEED_FRAC(:,I_SEED),DELTA_CART,DISTANCE)
++         IF (DISTANCE<0.5_q*GRID_STEP) RETURN
++      ENDDO
++
++      N_CANDIDATE=N_CANDIDATE+1
++
++      IF (N_CANDIDATE>MAX_CANDIDATES) THEN
++         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: too many center seeds.')
++      ENDIF
++
++      SEED_FRAC(:,N_CANDIDATE)=SEED_FOLDED
++   END SUBROUTINE ADD_SEED
++
++   SUBROUTINE EVALUATE_CENTER(CENTER_FRAC,GRID_STRIDE,RADIUS,SMEAR,SHIFT,CHARGE_RATIO,MOMENT,IS_VALID)
++      REAL(q), INTENT(IN) :: CENTER_FRAC(3)
++      INTEGER, INTENT(IN) :: GRID_STRIDE
++      REAL(q), INTENT(OUT) :: RADIUS,SMEAR,SHIFT(3),CHARGE_RATIO,MOMENT
++      LOGICAL, INTENT(OUT) :: IS_VALID
++
++      INTEGER :: NSAMPLE,ISAMPLE,J1,J2,J3,INDEX_GRID,IBISECT
++      REAL(q) :: GRID_FRAC(3),DELTA_CART(3),DISTANCE
++      REAL(q) :: R_LOW,R_HIGH,R_MID,Q_TOTAL,Q_ENVELOPE,WEIGHT,WEIGHTED_RHO,FERMI_ARG
++
++      NSAMPLE=0
++
++      DO J3=0,NZ-1,GRID_STRIDE
++         DO J2=0,NY-1,GRID_STRIDE
++            DO J1=0,NX-1,GRID_STRIDE
++               INDEX_GRID=J1+J2*NX+J3*NX*NY+1
++               IF (INDEX_GRID>NP_GRID) CYCLE
++
++               GRID_FRAC=(/REAL(J1,q)/REAL(NX,q),REAL(J2,q)/REAL(NY,q),REAL(J3,q)/REAL(NZ,q)/)
++               CALL MINIMUM_IMAGE(GRID_FRAC,CENTER_FRAC,DELTA_CART,DISTANCE)
++
++               NSAMPLE=NSAMPLE+1
++               SAMPLE_RHO(NSAMPLE)=RHO_GRID(INDEX_GRID)
++               SAMPLE_DISTANCE(NSAMPLE)=DISTANCE
++               SAMPLE_DELTA_CART(:,NSAMPLE)=DELTA_CART
++            ENDDO
++         ENDDO
++      ENDDO
++
++      Q_TOTAL=SUM(SAMPLE_RHO(1:NSAMPLE))
++
++      IF (Q_TOTAL<=1.0E-30_q) THEN
++         IS_VALID=.FALSE.
++         RADIUS=HUGE(1.0_q)
++         SMEAR=0.0_q
++         SHIFT=0.0_q
++         CHARGE_RATIO=0.0_q
++         MOMENT=HUGE(1.0_q)
++         RETURN
++      ENDIF
++
++      R_LOW=0.0_q
++      R_HIGH=R_SEARCH_MAX
++      SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*R_HIGH)
++      Q_ENVELOPE=ENVELOPE_CHARGE(R_HIGH,SMEAR,NSAMPLE)
++
++      IF (Q_ENVELOPE<TARGET_CHARGE*Q_TOTAL) THEN
++         IS_VALID=.FALSE.
++         RADIUS=HUGE(1.0_q)
++         SHIFT=0.0_q
++         CHARGE_RATIO=Q_ENVELOPE/Q_TOTAL
++         MOMENT=HUGE(1.0_q)
++         RETURN
++      ENDIF
++
++      DO IBISECT=1,RADIUS_BISECT_ITER
++         R_MID=0.5_q*(R_LOW+R_HIGH)
++         SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*R_MID)
++         Q_ENVELOPE=ENVELOPE_CHARGE(R_MID,SMEAR,NSAMPLE)
++
++         IF (Q_ENVELOPE<TARGET_CHARGE*Q_TOTAL) THEN
++            R_LOW=R_MID
++         ELSE
++            R_HIGH=R_MID
++         ENDIF
++      ENDDO
++
++      RADIUS=R_HIGH
++      SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*RADIUS)
++      SHIFT=0.0_q
++      MOMENT=0.0_q
++      Q_ENVELOPE=0.0_q
++
++      DO ISAMPLE=1,NSAMPLE
++         FERMI_ARG=(SAMPLE_DISTANCE(ISAMPLE)-RADIUS)/SMEAR
++
++         IF (FERMI_ARG>50.0_q) THEN
++            WEIGHT=0.0_q
++         ELSEIF (FERMI_ARG<-50.0_q) THEN
++            WEIGHT=1.0_q
++         ELSE
++            WEIGHT=1.0_q/(1.0_q+EXP(FERMI_ARG))
++         ENDIF
++
++         WEIGHTED_RHO=SAMPLE_RHO(ISAMPLE)*WEIGHT
++         Q_ENVELOPE=Q_ENVELOPE+WEIGHTED_RHO
++         SHIFT=SHIFT+WEIGHTED_RHO*SAMPLE_DELTA_CART(:,ISAMPLE)
++         MOMENT=MOMENT+WEIGHTED_RHO*SAMPLE_DISTANCE(ISAMPLE)**2
++      ENDDO
++
++      SHIFT=SHIFT/MAX(Q_ENVELOPE,1.0E-30_q)
++      MOMENT=MOMENT/MAX(Q_ENVELOPE,1.0E-30_q)
++      CHARGE_RATIO=Q_ENVELOPE/Q_TOTAL
++      IS_VALID=.TRUE.
++   END SUBROUTINE EVALUATE_CENTER
++
++   FUNCTION ENVELOPE_CHARGE(RADIUS,SMEAR,NSAMPLE) RESULT(CHARGE)
++      REAL(q), INTENT(IN) :: RADIUS,SMEAR
++      INTEGER, INTENT(IN) :: NSAMPLE
++
++      INTEGER :: ISAMPLE
++      REAL(q) :: CHARGE,FERMI_ARG,WEIGHT
++
++      CHARGE=0.0_q
++
++      DO ISAMPLE=1,NSAMPLE
++         FERMI_ARG=(SAMPLE_DISTANCE(ISAMPLE)-RADIUS)/SMEAR
++
++         IF (FERMI_ARG>50.0_q) THEN
++            WEIGHT=0.0_q
++         ELSEIF (FERMI_ARG<-50.0_q) THEN
++            WEIGHT=1.0_q
++         ELSE
++            WEIGHT=1.0_q/(1.0_q+EXP(FERMI_ARG))
++         ENDIF
++
++         CHARGE=CHARGE+SAMPLE_RHO(ISAMPLE)*WEIGHT
++      ENDDO
++   END FUNCTION ENVELOPE_CHARGE
++
++   SUBROUTINE MINIMUM_IMAGE(POINT_FRAC,CENTER_FRAC,DELTA_CART_MIN,DISTANCE_MIN)
++      REAL(q), INTENT(IN) :: POINT_FRAC(3),CENTER_FRAC(3)
++      REAL(q), INTENT(OUT) :: DELTA_CART_MIN(3),DISTANCE_MIN
++
++      INTEGER :: BASE_IMAGE(3),J1,J2,J3
++      REAL(q) :: DELTA_FRAC(3),DELTA_CART(3),DISTANCE2,DISTANCE2_MIN
++
++      BASE_IMAGE=NINT(CENTER_FRAC-POINT_FRAC)
++      DISTANCE2_MIN=HUGE(1.0_q)
++      DELTA_CART_MIN=0.0_q
++
++      DO J1=-1,1
++         DO J2=-1,1
++            DO J3=-1,1
++               DELTA_FRAC=POINT_FRAC+REAL(BASE_IMAGE+(/J1,J2,J3/),q)-CENTER_FRAC
++               DELTA_CART=DELTA_FRAC(1)*LATT_CUR%A(:,1)+DELTA_FRAC(2)*LATT_CUR%A(:,2)+DELTA_FRAC(3)*LATT_CUR%A(:,3)
++               DISTANCE2=SUM(DELTA_CART**2)
++
++               IF (DISTANCE2<DISTANCE2_MIN) THEN
++                  DISTANCE2_MIN=DISTANCE2
++                  DELTA_CART_MIN=DELTA_CART
++               ENDIF
++            ENDDO
++         ENDDO
++      ENDDO
++
++      DISTANCE_MIN=SQRT(DISTANCE2_MIN)
++   END SUBROUTINE MINIMUM_IMAGE
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_LOCATE_CENTER
++!***********************************************************************
++!> Fix the global phase convention of each Gamma Wannier orbital.
++!>
++!> NRSPINORS=1:
++!>   use the maximum-amplitude phase convention.
++!>
++!> NRSPINORS=2:
++!>   choose one common spin basis and use the doubled-phase integral.
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_PHASE_FIX(WF_SPINOR,WDES_GM,U_GM,IO)
++
++   USE base
++   USE constant
++   USE wave_high
++   USE tutor, ONLY: vtutor
++
++   IMPLICIT NONE
++
++   TYPE(wavedes), INTENT(IN) :: WDES_GM
++   COMPLEX(q), INTENT(IN) :: WF_SPINOR(:,:,:)
++   COMPLEX(q), INTENT(INOUT) :: U_GM(:,:)
++   TYPE(in_struct), INTENT(IN) :: IO
++
++   COMPLEX(q) :: Z_MAX,C_CORR
++   COMPLEX(q) :: UP,DN,A_V,B_V,PHASE2,C_TOTAL
++   COMPLEX(q) :: C_PART(3)
++   COMPLEX(q) :: V_SPIN(2,2),Z_ROT,DET_V
++   COMPLEX(q) :: V_CHECK(2,2),ID2(2,2)
++
++   REAL(q) :: K_TOTAL(3,3),K_ORB(3,3),SPIN_VEC(3)
++   REAL(q) :: AXIS(3),EIG_MIN,OBJECTIVE_OLD,ORTH_ERR
++   REAL(q) :: CHARGE_PART(3),CHARGE_TOTAL,ETA,ARG_C
++   REAL(q) :: WA,WB,RHO,RHO_SUM_G,GRID_WEIGHT
++   REAL(q) :: POLE_FRACTION,C_HALF,MAX_RHO
++
++   REAL(q) :: EIG_A(3,3),EIG_QMAT(3,3),EIG_ROT(3,3)
++   REAL(q) :: EIG_OFF12,EIG_OFF13,EIG_OFF23,EIG_OFFMAX,EIG_SCALE
++   REAL(q) :: EIG_TAU,EIG_T,EIG_C,EIG_S,EIG_NORM
++
++   INTEGER :: NP_GRID,NRSPINORS,NUM_WANN
++   INTEGER :: M,IND_G,I,J,REGION,MAX_INDEX
++   INTEGER :: EIG_ITER,EIG_IP,EIG_IQ,EIG_IDX
++
++   REAL(q), PARAMETER :: POLE_TOL = 1.0E-8_q
++   REAL(q), PARAMETER :: RHO_EPS = 1.0E-30_q
++   REAL(q), PARAMETER :: PHASE_EPS = 1.0E-14_q
++
++   NP_GRID = SIZE(WF_SPINOR,1)
++   NRSPINORS = SIZE(WF_SPINOR,2)
++   NUM_WANN = SIZE(WF_SPINOR,3)
++
++   IF (NP_GRID /= WDES_GM%GRID%RL%NP) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_PHASE_FIX: invalid real-space grid size.')
++
++   IF (NRSPINORS /= 1 .AND. NRSPINORS /= 2) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_PHASE_FIX: invalid NRSPINORS.')
++
++   IF (NRSPINORS /= WDES_GM%NRSPINORS) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_PHASE_FIX: inconsistent NRSPINORS.')
++
++   IF (SIZE(U_GM,1)<1 .OR. SIZE(U_GM,2)/=NUM_WANN) &
++      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_PHASE_FIX: invalid U_GM dimensions.')
++
++   GRID_WEIGHT = 1.0_q/REAL(WDES_GM%GRID%NPLWV,q)
++
++   SELECT CASE (NRSPINORS)
++
++   !====================================================================
++   ! Scalar/non-spinor phase convention.
++   !====================================================================
++   CASE (1)
++
++      DO M = 1, NUM_WANN
++         MAX_INDEX = MAXLOC(ABS(WF_SPINOR(:,1,M)),DIM=1)
++         Z_MAX = WF_SPINOR(MAX_INDEX,1,M)
++         MAX_RHO = REAL(Z_MAX*CONJG(Z_MAX),q)
++
++         IF (ABS(Z_MAX) > 1.0E-12_q) THEN
++            C_CORR = CONJG(Z_MAX)/ABS(Z_MAX)
++         ELSE
++            C_CORR = CMPLX(1.0_q,0.0_q,q)
++         ENDIF
++
++         U_GM(:,M) = U_GM(:,M)*C_CORR
++
++         IF (IO%IU0 >= 0) THEN
++            WRITE(IO%IU0,*) '========== SCALAR GAMMA PHASE FIX =========='
++            WRITE(IO%IU0,'(A,I5,A,ES16.7)') 'Wannier orbital: ',M,' max rho: ',MAX_RHO
++            WRITE(IO%IU0,'(A,2F16.9)') 'correction (Re,Im): ',REAL(C_CORR,q),AIMAG(C_CORR)
++         ENDIF
++      ENDDO
++
++   !====================================================================
++   ! NCL/SOC spinor phase convention.
++   !====================================================================
++   CASE (2)
++
++      ! Construct the charge-weighted common-axis tensor:
++      ! K_ij = sum_alpha [ integral s_i(r)s_j(r)/rho(r) ] / [ integral rho(r) ]
++      ! The eigenvector with the smallest eigenvalue defines the new z axis.
++      K_TOTAL = 0.0_q
++
++      DO M = 1, NUM_WANN
++         K_ORB = 0.0_q
++         RHO_SUM_G = 0.0_q
++
++         DO IND_G = 1, NP_GRID
++            UP = WF_SPINOR(IND_G,1,M)
++            DN = WF_SPINOR(IND_G,2,M)
++            RHO = REAL(UP*CONJG(UP)+DN*CONJG(DN),q)
++
++            IF (RHO > RHO_EPS) THEN
++               SPIN_VEC(1) = 2.0_q*REAL(CONJG(UP)*DN,q)
++               SPIN_VEC(2) = 2.0_q*AIMAG(CONJG(UP)*DN)
++               SPIN_VEC(3) = REAL(UP*CONJG(UP)-DN*CONJG(DN),q)
++
++               DO I = 1, 3
++                  DO J = 1, 3
++                     K_ORB(I,J) = K_ORB(I,J)+SPIN_VEC(I)*SPIN_VEC(J)/RHO
++                  ENDDO
++               ENDDO
++
++               RHO_SUM_G = RHO_SUM_G+RHO
++            ENDIF
++         ENDDO
++
++         IF (RHO_SUM_G > RHO_EPS) K_TOTAL = K_TOTAL+K_ORB/RHO_SUM_G
++      ENDDO
++
++      K_TOTAL = K_TOTAL/REAL(NUM_WANN,q)
++      OBJECTIVE_OLD = K_TOTAL(3,3)
++
++      ! Inline real-symmetric 3x3 Jacobi diagonalization.
++      EIG_A = K_TOTAL
++      EIG_QMAT = 0.0_q
++      EIG_QMAT(1,1) = 1.0_q
++      EIG_QMAT(2,2) = 1.0_q
++      EIG_QMAT(3,3) = 1.0_q
++
++      DO EIG_ITER = 1, 60
++         EIG_OFF12 = ABS(EIG_A(1,2))
++         EIG_OFF13 = ABS(EIG_A(1,3))
++         EIG_OFF23 = ABS(EIG_A(2,3))
++
++         EIG_IP = 1
++         EIG_IQ = 2
++         EIG_OFFMAX = EIG_OFF12
++
++         IF (EIG_OFF13 > EIG_OFFMAX) THEN
++            EIG_IP = 1
++            EIG_IQ = 3
++            EIG_OFFMAX = EIG_OFF13
++         ENDIF
++
++         IF (EIG_OFF23 > EIG_OFFMAX) THEN
++            EIG_IP = 2
++            EIG_IQ = 3
++            EIG_OFFMAX = EIG_OFF23
++         ENDIF
++
++         EIG_SCALE = MAX(1.0_q,ABS(EIG_A(1,1)),ABS(EIG_A(2,2)),ABS(EIG_A(3,3)))
++
++         IF (EIG_OFFMAX < 1.0E-14_q*EIG_SCALE) EXIT
++
++         EIG_TAU = (EIG_A(EIG_IQ,EIG_IQ)-EIG_A(EIG_IP,EIG_IP))/ &
++            (2.0_q*EIG_A(EIG_IP,EIG_IQ))
++
++         IF (EIG_TAU >= 0.0_q) THEN
++            EIG_T = 1.0_q/(EIG_TAU+SQRT(1.0_q+EIG_TAU*EIG_TAU))
++         ELSE
++            EIG_T = -1.0_q/(-EIG_TAU+SQRT(1.0_q+EIG_TAU*EIG_TAU))
++         ENDIF
++
++         EIG_C = 1.0_q/SQRT(1.0_q+EIG_T*EIG_T)
++         EIG_S = EIG_T*EIG_C
++
++         EIG_ROT = 0.0_q
++         EIG_ROT(1,1) = 1.0_q
++         EIG_ROT(2,2) = 1.0_q
++         EIG_ROT(3,3) = 1.0_q
++
++         EIG_ROT(EIG_IP,EIG_IP) = EIG_C
++         EIG_ROT(EIG_IQ,EIG_IQ) = EIG_C
++         EIG_ROT(EIG_IP,EIG_IQ) = EIG_S
++         EIG_ROT(EIG_IQ,EIG_IP) = -EIG_S
++
++         EIG_A = MATMUL(TRANSPOSE(EIG_ROT),MATMUL(EIG_A,EIG_ROT))
++         EIG_QMAT = MATMUL(EIG_QMAT,EIG_ROT)
++      ENDDO
++
++      EIG_IDX = 1
++      IF (EIG_A(2,2) < EIG_A(EIG_IDX,EIG_IDX)) EIG_IDX = 2
++      IF (EIG_A(3,3) < EIG_A(EIG_IDX,EIG_IDX)) EIG_IDX = 3
++
++      EIG_MIN = EIG_A(EIG_IDX,EIG_IDX)
++      AXIS = EIG_QMAT(:,EIG_IDX)
++
++      EIG_NORM = SQRT(SUM(AXIS**2))
++
++      IF (EIG_NORM <= 1.0E-20_q) THEN
++         AXIS = (/0.0_q,0.0_q,1.0_q/)
++      ELSE
++         AXIS = AXIS/EIG_NORM
++      ENDIF
++
++      ! Fix the sign of the SO(3) axis and construct its deterministic
++      ! minimal-rotation SU(2) lift.
++      IF (AXIS(3) < 0.0_q) AXIS = -AXIS
++      IF (ABS(AXIS(3)) < 1.0E-14_q .AND. AXIS(2) < 0.0_q) AXIS = -AXIS
++      IF (ABS(AXIS(3))+ABS(AXIS(2)) < 1.0E-14_q .AND. AXIS(1) < 0.0_q) AXIS = -AXIS
++
++      C_HALF = SQRT((1.0_q+AXIS(3))/2.0_q)
++      Z_ROT = CMPLX(AXIS(1),AXIS(2),q)/(2.0_q*C_HALF)
++
++      V_SPIN(1,1) = CMPLX(C_HALF,0.0_q,q)
++      V_SPIN(2,1) = Z_ROT
++      V_SPIN(1,2) = -CONJG(Z_ROT)
++      V_SPIN(2,2) = CMPLX(C_HALF,0.0_q,q)
++
++      ID2 = CMPLX(0.0_q,0.0_q,q)
++      ID2(1,1) = CMPLX(1.0_q,0.0_q,q)
++      ID2(2,2) = CMPLX(1.0_q,0.0_q,q)
++
++      V_CHECK = MATMUL(CONJG(TRANSPOSE(V_SPIN)),V_SPIN)-ID2
++      ORTH_ERR = MAXVAL(ABS(V_CHECK))
++      DET_V = V_SPIN(1,1)*V_SPIN(2,2)-V_SPIN(1,2)*V_SPIN(2,1)
++
++      IF (IO%IU0 >= 0) THEN
++         WRITE(IO%IU0,*) '========== NCL COMMON SPIN BASIS =========='
++         WRITE(IO%IU0,'(A,3F14.8)') 'new z axis: ',AXIS
++         WRITE(IO%IU0,'(A,2ES16.7)') 'objective old/new: ',OBJECTIVE_OLD,EIG_MIN
++         WRITE(IO%IU0,'(A,4F14.8)') 'V row 1 (Re,Im): ', &
++            REAL(V_SPIN(1,1),q),AIMAG(V_SPIN(1,1)),REAL(V_SPIN(1,2),q),AIMAG(V_SPIN(1,2))
++         WRITE(IO%IU0,'(A,4F14.8)') 'V row 2 (Re,Im): ', &
++            REAL(V_SPIN(2,1),q),AIMAG(V_SPIN(2,1)),REAL(V_SPIN(2,2),q),AIMAG(V_SPIN(2,2))
++         WRITE(IO%IU0,'(A,ES12.4,A,2F14.8)') 'unitarity error: ',ORTH_ERR, &
++            ' det(V): ',REAL(DET_V,q),AIMAG(DET_V)
++      ENDIF
++
++      ! Integrate the doubled spinor phase and correct each Gamma column.
++      ! C_PART = normal region, north pole, south pole.
++      DO M = 1, NUM_WANN
++         C_PART = CMPLX(0.0_q,0.0_q,q)
++         CHARGE_PART = 0.0_q
++
++         DO IND_G = 1, NP_GRID
++            UP = WF_SPINOR(IND_G,1,M)
++            DN = WF_SPINOR(IND_G,2,M)
++
++            A_V = CONJG(V_SPIN(1,1))*UP+CONJG(V_SPIN(2,1))*DN
++            B_V = CONJG(V_SPIN(1,2))*UP+CONJG(V_SPIN(2,2))*DN
++
++            WA = REAL(A_V*CONJG(A_V),q)
++            WB = REAL(B_V*CONJG(B_V),q)
++            RHO = WA+WB
++
++            IF (RHO <= RHO_EPS) CYCLE
++
++            IF (WB <= POLE_TOL*RHO) THEN
++               REGION = 2
++               PHASE2 = CMPLX(0.0_q,1.0_q,q)*(A_V/ABS(A_V))**2
++            ELSEIF (WA <= POLE_TOL*RHO) THEN
++               REGION = 3
++               PHASE2 = -CMPLX(0.0_q,1.0_q,q)*(B_V/ABS(B_V))**2
++            ELSE
++               REGION = 1
++               PHASE2 = CMPLX(0.0_q,1.0_q,q)*(A_V/ABS(A_V))*(B_V/ABS(B_V))
++            ENDIF
++
++            C_PART(REGION) = C_PART(REGION)+GRID_WEIGHT*RHO*PHASE2
++            CHARGE_PART(REGION) = CHARGE_PART(REGION)+GRID_WEIGHT*RHO
++         ENDDO
++
++         C_TOTAL = SUM(C_PART)
++         CHARGE_TOTAL = SUM(CHARGE_PART)
++         ETA = ABS(C_TOTAL)/MAX(CHARGE_TOTAL,RHO_EPS)
++         POLE_FRACTION = (CHARGE_PART(2)+CHARGE_PART(3))/MAX(CHARGE_TOTAL,RHO_EPS)
++
++         IF (ABS(C_TOTAL) > PHASE_EPS*MAX(CHARGE_TOTAL,RHO_EPS)) THEN
++            ARG_C = ATAN2(AIMAG(C_TOTAL),REAL(C_TOTAL,q))
++            C_CORR = CMPLX(COS(-0.5_q*ARG_C),SIN(-0.5_q*ARG_C),q)
++         ELSE
++            ARG_C = 0.0_q
++            C_CORR = CMPLX(1.0_q,0.0_q,q)
++         ENDIF
++
++         U_GM(:,M) = U_GM(:,M)*C_CORR
++
++         IF (IO%IU0 >= 0) THEN
++            WRITE(IO%IU0,*) '========== NCL GAMMA PHASE FIX =========='
++            WRITE(IO%IU0,'(A,I5,A,ES16.7)') 'Wannier orbital: ',M,' WS charge: ',CHARGE_TOTAL
++            WRITE(IO%IU0,'(A,2ES18.9)') 'C_alpha (Re,Im): ',REAL(C_TOTAL,q),AIMAG(C_TOTAL)
++            WRITE(IO%IU0,'(A,2ES16.7)') 'correction phase / eta: ',-0.5_q*ARG_C,ETA
++            WRITE(IO%IU0,'(A,3ES16.7)') 'normal/north/south charge: ',CHARGE_PART
++            WRITE(IO%IU0,'(A,ES16.7)') 'total pole charge fraction: ',POLE_FRACTION
++            WRITE(IO%IU0,'(A,2ES18.9)') 'C normal (Re,Im): ',REAL(C_PART(1),q),AIMAG(C_PART(1))
++            WRITE(IO%IU0,'(A,2ES18.9)') 'C north  (Re,Im): ',REAL(C_PART(2),q),AIMAG(C_PART(2))
++            WRITE(IO%IU0,'(A,2ES18.9)') 'C south  (Re,Im): ',REAL(C_PART(3),q),AIMAG(C_PART(3))
++
++            IF (ABS(C_TOTAL) <= PHASE_EPS*MAX(CHARGE_TOTAL,RHO_EPS)) &
++               WRITE(IO%IU0,*) 'WARNING: C_alpha is too small to define a stable global phase.'
++         ENDIF
++      ENDDO
++
++   END SELECT
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_PHASE_FIX
++!***********************************************************************
++!> Compute the orbital-dependent k-to-Gamma Wigner-Seitz overlaps.
++!>
++!> I_KGAMMA(k_band,gamma_band,wannier,kpoint,spin)
++!>   = <psi_{k_band,k} |
++!>       chi_WS(tau_wannier)
++!>     | psi_{gamma_band,Gamma}>
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP(MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,TAU_WANN_FRAC,I_KGAMMA,IO)
++   USE base
++   USE constant
++   USE pseudo
++   USE poscar
++   USE lattice
++   USE wave_high
++   USE radial
++   USE pead, ONLY: CALC_OVERLAP_CLUSTER_BLAS
++
++   IMPLICIT NONE
++
++   TYPE(MLWF_type),    INTENT(IN)  :: MLWF
++   TYPE(wavedes),      INTENT(IN)  :: WDES
++   TYPE(wavespin),     INTENT(IN)  :: W
++   TYPE(potcar),       INTENT(IN)  :: P(:)
++   OVERLAP,            INTENT(IN)  :: CQIJ(:,:,:,:)
++   TYPE(type_info),    INTENT(IN)  :: T_INFO
++   TYPE(latt),         INTENT(IN)  :: LATT_CUR
++   REAL(q), INTENT(IN) :: TAU_WANN_FRAC(:,:,:)
++   COMPLEX(q), ALLOCATABLE, INTENT(OUT) :: I_KGAMMA(:,:,:,:,:)
++   TYPE(in_struct),    INTENT(IN)  :: IO
++
++   REAL(q) :: KI(3), KJ(3)
++   GDEF, ALLOCATABLE :: S_3D(:,:,:)
++
++   INTEGER :: ISP
++   INTEGER :: I_BAND,J_BAND,I_BAND_FULL,J_BAND_FULL
++   INTEGER :: I_K, GAMMA_INDEX
++   INTEGER :: NUM_WANN, NUM_BAND
++
++   NUM_WANN  = MLWF%NUM_WANN
++   NUM_BAND = MLWF%NB_TOT - MLWF%NEXCLB
++
++   IF (SIZE(TAU_WANN_FRAC,1) /= 3 .OR. &
++       SIZE(TAU_WANN_FRAC,2) /= NUM_WANN .OR. &
++       SIZE(TAU_WANN_FRAC,3) /= WDES%ISPIN) THEN
++      CALL vtutor%error( &
++         'MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP: invalid WanJ_BANDer-center dimensions.')
++   ENDIF
++
++   ! Locate Gamma in the full k-point list used by the main MLWF object.
++   GAMMA_INDEX = 0
++
++   DO I_K = 1, MLWF%NKPTS
++      IF (ALL(ABS(MLWF%kpt_latt(:,I_K)) < 1.0E-6_q)) THEN
++         GAMMA_INDEX = I_K
++         EXIT
++      ENDIF
++   ENDDO
++
++   IF (GAMMA_INDEX == 0) THEN
++      CALL vtutor%error( &
++         'MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP: no Gamma point found.')
++   ENDIF
++
++   ALLOCATE(S_3D(WDES%NB_TOT,WDES%NB_TOT,NUM_WANN))
++   ALLOCATE(I_KGAMMA(NUM_BAND,NUM_BAND,NUM_WANN,MLWF%NKPTS,WDES%ISPIN))
++   I_KGAMMA = CMPLX(0.0_q,0.0_q,q)
++
++   DO ISP = 1, WDES%ISPIN
++      DO I_K = 1, MLWF%NKPTS
++
++         ! Skip the k-point which does not belong to its k-interval MPI group
++#ifdef MPI
++         IF (MOD(I_K-1,WDES%COMM_KINTER%NCPU).NE.WDES%COMM_KINTER%NODE_ME-1) CYCLE
++#endif
++         KI = MLWF%kpt_latt(:,I_K)
++         KJ = MLWF%kpt_latt(:,GAMMA_INDEX)
++
++         ! IF (IO%IU0 >= 0) THEN
++         !    WRITE(IO%IU0,*) '========== DEBUG: REALSPACE OVERLAP =========='
++         !    WRITE(IO%IU0,*) 'I_K = ', I_K
++         !    WRITE(IO%IU0,*) 'ISP = ', ISP
++         !    WRITE(IO%IU0,'(A,3F16.10)') 'KI = ', KI
++         !    WRITE(IO%IU0,'(A,3F16.10)') 'KJ = ', KJ
++         ! ENDIF
++
++         CALL CALC_OVERLAP_CLUSTER_BLAS(W,KI,KJ,ISP,P,CQIJ,LATT_CUR,T_INFO,NUM_WANN,TAU_WANN_FRAC,S_3D)
++
++         J_BAND = 0
++         DO J_BAND_FULL = 1, WDES%NB_TOT
++            IF (MLWF%EXCLUDE_BAND(J_BAND_FULL)) CYCLE
++            J_BAND = J_BAND + 1
++            I_BAND = 0
++            DO I_BAND_FULL = 1, WDES%NB_TOT
++               IF (MLWF%EXCLUDE_BAND(I_BAND_FULL)) CYCLE
++               I_BAND = I_BAND + 1
++               I_KGAMMA(I_BAND,J_BAND,:,I_K,ISP) = S_3D(I_BAND_FULL,J_BAND_FULL,:)
++            ENDDO
++         ENDDO
++
++         IF (J_BAND /= NUM_BAND .OR. I_BAND /= NUM_BAND) THEN
++            CALL vtutor%error( &
++               'MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP: active-band mapping failed.')
++         ENDIF
++
++         ! Gamma block debug information
++         ! IF (IO%IU0 >= 0) THEN
++         !    WRITE(IO%IU0,*) '------ I_KGAMMA BLOCK ------'
++         !    WRITE(IO%IU0,*) '--- REAL PART ---'
++         !    DO J_BAND = 1, NUM_BAND
++         !       WRITE(IO%IU0,'(1000F12.6)') (REAL(I_KGAMMA(I_BAND,J_BAND,1,I_K,ISP),q),I_BAND=1,NUM_BAND)
++         !    ENDDO
++         !    WRITE(IO%IU0,*) '--- IMAG PART ---'
++         !    DO J_BAND = 1, NUM_BAND
++         !       WRITE(IO%IU0,'(1000F12.6)') (AIMAG(I_KGAMMA(I_BAND,J_BAND,1,I_K,ISP)),I_BAND=1,NUM_BAND)
++         !    ENDDO
++         ! ENDIF
++      ENDDO
++   ENDDO
++
++   CALLMPI(M_sum_z8(WDES%COMM_KINTER, I_KGAMMA, SIZE(I_KGAMMA,KIND=qi8)))
++
++   DEALLOCATE(S_3D)
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP
++
++!***********************************************************************
++!> Construct the persistent Gamma-adaptive AMN matrix:
++!>
++!> A(k_band,wannier,kpoint,spin)
++!>   = sum_gamma_band
++!>       I_KGAMMA(k_band,gamma_band,wannier,kpoint,spin)
++!>       * U_GM(gamma_band,wannier,spin).
++!***********************************************************************
++ SUBROUTINE MLWF_GAMMA_ADAPTIVE_BUILD_AMN(MLWF,I_KGAMMA,U_GM,IO)
++   USE base
++   USE tutor, ONLY : vtutor
++   IMPLICIT NONE
++
++   TYPE(MLWF_type), INTENT(INOUT) :: MLWF
++   COMPLEX(q), INTENT(IN) :: I_KGAMMA(:,:,:,:,:)
++   ! U_GM(band,wannier,spin_channel)
++   COMPLEX(q), INTENT(IN) :: U_GM(:,:,:)
++   TYPE(in_struct), INTENT(IN)    :: IO
++
++   INTEGER :: ISP,I_K,I_WANN
++   INTEGER :: NUM_BAND, NUM_WANN, NKPTS, ISPIN
++
++   NUM_BAND = MLWF%NB_TOT - MLWF%NEXCLB
++   NUM_WANN  = MLWF%NUM_WANN
++   NKPTS  = MLWF%NKPTS
++   ISPIN  = MLWF%ISPIN
++
++   IF (SIZE(U_GM,1) /= NUM_BAND .OR. &
++       SIZE(U_GM,2) /= NUM_WANN  .OR. &
++       SIZE(U_GM,3) /= ISPIN) THEN
++      CALL vtutor%error( &
++         'MLWF_GAMMA_ADAPTIVE_BUILD_AMN: invalid U_GM dimensions.')
++   ENDIF
++
++   IF (SIZE(I_KGAMMA,1) /= NUM_BAND .OR. &
++       SIZE(I_KGAMMA,2) /= NUM_BAND .OR. &
++       SIZE(I_KGAMMA,3) /= NUM_WANN  .OR. &
++       SIZE(I_KGAMMA,4) /= NKPTS  .OR. &
++       SIZE(I_KGAMMA,5) /= ISPIN) THEN
++      CALL vtutor%error( &
++         'MLWF_GAMMA_ADAPTIVE_BUILD_AMN: invalid I_KGAMMA dimensions.')
++   ENDIF
++
++   IF (ALLOCATED(MLWF%A_matrix)) DEALLOCATE(MLWF%A_matrix)
++
++   ALLOCATE(MLWF%A_matrix(NUM_BAND,NUM_WANN,NKPTS,ISPIN))
++   MLWF%A_matrix = (0.0_q,0.0_q)
++
++   DO ISP=1,ISPIN
++      DO I_K=1,NKPTS
++         DO I_WANN=1,NUM_WANN
++            MLWF%A_matrix(:,I_WANN,I_K,ISP)= &
++            MATMUL(I_KGAMMA(:,:,I_WANN,I_K,ISP),U_GM(:,I_WANN,ISP))
++         ENDDO
++      ENDDO
++   ENDDO
++
++ END SUBROUTINE MLWF_GAMMA_ADAPTIVE_BUILD_AMN
++#endif
++
+ !***********************************************************************
+diff --git a/src/pead.F b/src/pead.F
+index 9ba933a..0114c2a 100644
+--- a/src/pead.F
++++ b/src/pead.F
+@@ -41,3 +41,3 @@
+                 LBORN,BORN_CHARGES_PEAD,W_STORE,FAC, &
+-                PEAD_DPSI_DK_1K
++                PEAD_DPSI_DK_1K,CALC_OVERLAP_CLUSTER_BLAS
+ 
+@@ -4363,2 +4363,410 @@ __GPU    CALL OFFLOAD_ON_POP
+ 
++!**********************************************************************
++!> Compute center-dependent real-space overlaps using BLAS ZDOTC.
++!>
++!> This routine evaluates the Gamma-adaptive overlap tensor
++!>
++!>   S(m, n, l) = <psi_{m,k1} | region_l | psi_{n,k2}>
++!>
++!> where each Wannier orbital l defines its own Wigner-Seitz reference
++!> region through TAU_WANN(:, l). The real-space grid phase and PAW
++!> projector phase both use the same minimum-image convention.
++!**********************************************************************
++      SUBROUTINE CALC_OVERLAP_CLUSTER_BLAS(W, K1, K2, ISP, P, CQIJ, LATT_CUR, T_INFO, NWANN, TAU_WANN, S)
++      USE prec
++      USE constant
++      USE poscar
++      USE pseudo
++      USE lattice
++      USE full_kpoints
++      USE wave_high
++      USE dfast
++      USE sym_prec
++      USE paw
++
++      IMPLICIT NONE
++
++      TYPE(wavespin)  :: W
++      TYPE(potcar)    :: P(:)
++      TYPE(latt)      :: LATT_CUR
++      TYPE(type_info) :: T_INFO
++
++      REAL(q) :: K1(3), K2(3)
++      INTEGER :: ISP, NWANN
++      OVERLAP :: CQIJ(:,:,:,:)
++      REAL(q) :: TAU_WANN(3, NWANN)
++      GDEF    :: S(W%WDES%NB_TOT, W%WDES%NB_TOT, NWANN)
++
++      TYPE(wavefun1) :: WQ
++      TYPE(wavespin) :: WP
++      TYPE(wavefuna) :: WK, WHAM
++      TYPE(wavedes1), TARGET :: WDESK, WDESQ
++      TYPE(rotation_handle)  :: ROT_HANDLE
++      TYPE(wavefun1), ALLOCATABLE :: WK_ALL(:)
++
++      INTEGER :: M_GLB, N_GLB
++      INTEGER :: NX, NY, NZ, N1, N2, N3, IND_G
++      INTEGER :: L_ORB, IPRO
++      INTEGER :: IR1, IR2, IR3
++      INTEGER :: NBANDS, NSTRIP, NSTRIP_ACT
++      INTEGER :: N, NP, NK, NQ, NPOS
++
++      REAL(q) :: DK(3), DK1(3), DK2(3)
++      REAL(q) :: F1, F2, F3, A1, A2, A3
++      REAL(q) :: ARG, RA_FRAC(3), PHASE(3)
++
++      COMPLEX(q), ALLOCATABLE :: SV(:)
++      COMPLEX(q), ALLOCATABLE :: PHASE_ATOM(:,:), PHASE_GRID(:,:)
++
++      INTEGER :: ISPINOR, NIP, NIS, NT, NI, LMMAXC, L, NPRO
++      COMPLEX(q) :: PHASE_FAC
++
++      COMPLEX(q), ALLOCATABLE :: V_R_SOFT(:),V_R_HARD(:)
++      COMPLEX(q), ALLOCATABLE :: C_SOFT_BANDS(:)
++      COMPLEX(q) :: C_HARD
++      COMPLEX(q), EXTERNAL :: ZDOTC
++
++      INTEGER :: NP_GRID,NPRO_TOT,NPWS_K,NPWS_Q
++      INTEGER :: NK1, NK2, I
++
++      ! Minimum-image search variables for the Wigner-Seitz reference cell.
++      REAL(q) :: D_FRAC(3), D_CART(3), D_MIN, D_TEST
++      INTEGER :: I1, I2, I3
++      INTEGER :: IR1_BASE, IR2_BASE, IR3_BASE
++      INTEGER :: OPT_I1, OPT_I2, OPT_I3
++
++      S = 0.0_q
++
++      WP = W
++      WP%WDES => WDES_FULL_PEAD
++
++      NK1 = KPOINT_IN_FULL_GRID(K1, KPOINTS_FULL)
++      NK2 = KPOINT_IN_FULL_GRID(K2, KPOINTS_FULL)
++
++      DO I = 1, 3
++         DK1(I) = KPOINTS_FULL%VKPT(I, NK1)
++         DK2(I) = KPOINTS_FULL%VKPT(I, NK2)
++      ENDDO
++      DK = DK2 - DK1
++
++      NX = W%WDES%GRID%NGX
++      NY = W%WDES%GRID%NGY
++      NZ = W%WDES%GRID%NGZ
++
++      F1 = 1._q / NX
++      F2 = 1._q / NY
++      F3 = 1._q / NZ
++
++      NP_GRID = W%WDES%GRID%RL%NP
++      NPRO_TOT = W%WDES%NPRO
++
++      CALL CHECK_FULL_KPOINTS
++
++      ROT_HANDLE%LSETUP = .FALSE.
++      NSTRIP = NSTRIP_STANDARD
++
++!**********************************************************************
++! Part 1: Prepare left states at K1.
++!**********************************************************************
++      NK = KPOINT_IN_FULL_GRID(K1, KPOINTS_FULL)
++      CALL SETWDES(WP%WDES, WDESK, NK)
++
++      ! Rotate from the irreducible representative if K1 is symmetry related.
++      IF (NK == KPOINTS_FULL%NEQUIV(NK)) THEN
++         WK = ELEMENTS(WP, WDESK, ISP)
++      ELSE
++         CALL NEWWAVA(WK, WDESK, WDESK%NBANDS)
++         CALL WA_ROTATE(WP, P, LATT_CUR, ISP, WK)
++      ENDIF
++
++      ! Store all left bands as wavefun1 objects.
++      ALLOCATE(WK_ALL(W%WDES%NB_TOT))
++      DO M_GLB = 1, W%WDES%NB_TOT
++         CALL NEWWAV(WK_ALL(M_GLB), WDESK, .TRUE.)
++      ENDDO
++
++      ! Copy locally owned bands and FFT them to real space.
++      DO M_GLB = 1, W%WDES%NB_TOT
++         IF (MOD(M_GLB - 1, WDESK%NB_PAR) + 1 == WDESK%NB_LOW) THEN
++            N = 1 + (M_GLB - 1) / WDESK%NB_PAR
++
++            WK_ALL(M_GLB)%CW(1:WDESK%NGVECTOR*WDESK%NRSPINORS) = &
++               WK%CW(1:WDESK%NGVECTOR*WDESK%NRSPINORS,N)
++
++            IF (W%WDES%LOVERL) THEN
++               WK_ALL(M_GLB)%CPROJ(1:WDESK%NPROD) = WK%CPROJ(1:WDESK%NPROD, N)
++            ENDIF
++
++            CALL FFTWAV_W1(WK_ALL(M_GLB))
++         ENDIF
++      ENDDO
++
++#ifdef MPI
++      ! Broadcast each left-band real-space state from its band owner.
++      IF (WDESK%DO_REDIS) THEN
++         DO M_GLB = 1, W%WDES%NB_TOT
++            CALL M_bcast_z_from(WDESK%COMM_INTER, WK_ALL(M_GLB)%CR(1), &
++                                WDESK%GRID%MPLWV * WDESK%NRSPINORS, MOD(M_GLB - 1, WDESK%NB_PAR) + 1)
++
++            IF (W%WDES%LOVERL) THEN
++               CALL M_bcast_z_from(WDESK%COMM_INTER, WK_ALL(M_GLB)%CPROJ(1), &
++                                   WDESK%NPROD, MOD(M_GLB - 1, WDESK%NB_PAR) + 1)
++            ENDIF
++         ENDDO
++
++#ifdef MPI_barrier_after_bcast
++         CALLMPI( M_barrier(W%WDES%COMM_INTER) )
++#endif
++      ENDIF
++#endif
++
++!**********************************************************************
++! Part 2: Precompute Wigner-Seitz phase factors.
++!**********************************************************************
++      ALLOCATE(PHASE_ATOM(NPRO_TOT, NWANN))
++      PHASE_ATOM = (0.0_q, 0.0_q)
++
++      DO L_ORB = 1, NWANN
++         DO ISPINOR = 0, W%WDES%NRSPINORS - 1
++            NPRO = ISPINOR * (NPRO_TOT / 2)
++            NIS = 1
++
++            DO NT = 1, W%WDES%NTYP
++               LMMAXC = W%WDES%LMMAX(NT)
++
++               IF (LMMAXC /= 0) THEN
++                  DO NI = NIS, W%WDES%NITYP(NT) + NIS - 1
++                     NIP = NI_GLOBAL(NI, W%WDES%COMM_INB)
++                     RA_FRAC = T_INFO%POSION(:, NIP)
++
++                     ! Find the nearest periodic image of this atom relative to TAU_WANN.
++                     IR1_BASE = NINT(TAU_WANN(1, L_ORB) - RA_FRAC(1))
++                     IR2_BASE = NINT(TAU_WANN(2, L_ORB) - RA_FRAC(2))
++                     IR3_BASE = NINT(TAU_WANN(3, L_ORB) - RA_FRAC(3))
++
++                     D_MIN = 1.0E30_q
++                     OPT_I1 = IR1_BASE
++                     OPT_I2 = IR2_BASE
++                     OPT_I3 = IR3_BASE
++
++                     DO I1 = -1, 1
++                        DO I2 = -1, 1
++                           DO I3 = -1, 1
++                              D_FRAC(1) = RA_FRAC(1) + (IR1_BASE + I1) - TAU_WANN(1, L_ORB)
++                              D_FRAC(2) = RA_FRAC(2) + (IR2_BASE + I2) - TAU_WANN(2, L_ORB)
++                              D_FRAC(3) = RA_FRAC(3) + (IR3_BASE + I3) - TAU_WANN(3, L_ORB)
++
++                              D_CART(1) = D_FRAC(1)*LATT_CUR%A(1,1) + D_FRAC(2)*LATT_CUR%A(1,2) + D_FRAC(3)*LATT_CUR%A(1,3)
++                              D_CART(2) = D_FRAC(1)*LATT_CUR%A(2,1) + D_FRAC(2)*LATT_CUR%A(2,2) + D_FRAC(3)*LATT_CUR%A(2,3)
++                              D_CART(3) = D_FRAC(1)*LATT_CUR%A(3,1) + D_FRAC(2)*LATT_CUR%A(3,2) + D_FRAC(3)*LATT_CUR%A(3,3)
++
++                              D_TEST = D_CART(1)**2 + D_CART(2)**2 + D_CART(3)**2
++
++                              IF (D_TEST < D_MIN) THEN
++                                 D_MIN = D_TEST
++                                 OPT_I1 = IR1_BASE + I1
++                                 OPT_I2 = IR2_BASE + I2
++                                 OPT_I3 = IR3_BASE + I3
++                              ENDIF
++                           ENDDO
++                        ENDDO
++                     ENDDO
++
++                     IR1 = OPT_I1
++                     IR2 = OPT_I2
++                     IR3 = OPT_I3
++
++                     ! Keep the original phase convention.
++                     ARG = TPI * ((IR1 + RA_FRAC(1))*DK(1) + &
++                                  (IR2 + RA_FRAC(2))*DK(2) + &
++                                  (IR3 + RA_FRAC(3))*DK(3))
++
++                     PHASE_FAC = CMPLX(COS(ARG), SIN(ARG), q)
++
++                     DO L = 1, LMMAXC
++                        IF (L + NPRO <= NPRO_TOT) PHASE_ATOM(L + NPRO, L_ORB) = PHASE_FAC
++                     ENDDO
++
++                     NPRO = LMMAXC + NPRO
++                  ENDDO
++               ENDIF
++
++               NIS = NIS + W%WDES%NITYP(NT)
++            ENDDO
++         ENDDO
++      ENDDO
++
++      ALLOCATE(PHASE_GRID(NP_GRID, NWANN))
++
++      DO L_ORB = 1, NWANN
++         DO N3 = 0, NZ - 1
++            A3 = N3 * F3
++            DO N2 = 0, NY - 1
++               A2 = N2 * F2
++               DO N1 = 0, NX - 1
++                  A1 = N1 * F1
++
++                  ! Find the nearest periodic image of this grid point relative to TAU_WANN.
++                  IR1_BASE = NINT(TAU_WANN(1, L_ORB) - A1)
++                  IR2_BASE = NINT(TAU_WANN(2, L_ORB) - A2)
++                  IR3_BASE = NINT(TAU_WANN(3, L_ORB) - A3)
++
++                  D_MIN = 1.0E30_q
++                  OPT_I1 = IR1_BASE
++                  OPT_I2 = IR2_BASE
++                  OPT_I3 = IR3_BASE
++
++                  DO I1 = -1, 1
++                     DO I2 = -1, 1
++                        DO I3 = -1, 1
++                           D_FRAC(1) = A1 + (IR1_BASE + I1) - TAU_WANN(1, L_ORB)
++                           D_FRAC(2) = A2 + (IR2_BASE + I2) - TAU_WANN(2, L_ORB)
++                           D_FRAC(3) = A3 + (IR3_BASE + I3) - TAU_WANN(3, L_ORB)
++
++                           D_CART(1) = D_FRAC(1)*LATT_CUR%A(1,1) + D_FRAC(2)*LATT_CUR%A(1,2) + D_FRAC(3)*LATT_CUR%A(1,3)
++                           D_CART(2) = D_FRAC(1)*LATT_CUR%A(2,1) + D_FRAC(2)*LATT_CUR%A(2,2) + D_FRAC(3)*LATT_CUR%A(2,3)
++                           D_CART(3) = D_FRAC(1)*LATT_CUR%A(3,1) + D_FRAC(2)*LATT_CUR%A(3,2) + D_FRAC(3)*LATT_CUR%A(3,3)
++
++                           D_TEST = D_CART(1)**2 + D_CART(2)**2 + D_CART(3)**2
++
++                           IF (D_TEST < D_MIN) THEN
++                              D_MIN = D_TEST
++                              OPT_I1 = IR1_BASE + I1
++                              OPT_I2 = IR2_BASE + I2
++                              OPT_I3 = IR3_BASE + I3
++                           ENDIF
++                        ENDDO
++                     ENDDO
++                  ENDDO
++
++                  IR1 = OPT_I1
++                  IR2 = OPT_I2
++                  IR3 = OPT_I3
++
++                  ARG = TPI * ((IR1 + A1)*DK(1) + &
++                               (IR2 + A2)*DK(2) + &
++                               (IR3 + A3)*DK(3))
++
++                  IND_G = N1 + N2*NX + N3*NX*NY + 1
++                  PHASE_GRID(IND_G, L_ORB) = CMPLX(COS(ARG), SIN(ARG), q)
++               ENDDO
++            ENDDO
++         ENDDO
++      ENDDO
++
++!**********************************************************************
++! Part 3: Prepare right states at K2 and evaluate vector inner products.
++!**********************************************************************
++      NQ = KPOINT_IN_FULL_GRID(K2, KPOINTS_FULL)
++      CALL SETWDES(WP%WDES, WDESQ, NQ)
++
++      CALL NEWWAV(WQ, WDESQ, .TRUE.)
++      CALL NEWWAVA(WHAM, WDESK, NSTRIP)
++
++      ALLOCATE(SV(WDESQ%GRID%MPLWV))
++
++      CALL SET_PHASE_SHIFT(K1, K2, PHASE)
++      CALL SET_PHASE_SHIFT_GRID_RSPACE(PHASE, WDESQ, SV)
++
++      ! IF (W%WDES%COMM%NODE_ME == 1) THEN
++      !    WRITE(*,*) '========== PHASE DEBUG START =========='
++      !    WRITE(*,'(A,3F12.6)') 'K1 (Input)           = ', K1
++      !    WRITE(*,'(A,3F12.6)') 'K2 (Input)           = ', K2
++      !    WRITE(*,'(A,3F12.6)') 'K1_1stBZ (VKPT)      = ', KPOINTS_FULL%VKPT(:, NK1)
++      !    WRITE(*,'(A,3F12.6)') 'K2_1stBZ (VKPT)      = ', KPOINTS_FULL%VKPT(:, NK2)
++      !    WRITE(*,'(A,3F12.6)') 'DK (Custom DK2-DK1)  = ', DK
++      !    WRITE(*,'(A,3F12.6)') 'PHASE (VASP return)  = ', PHASE
++      !    WRITE(*,*) '--- Phase Values at Grid Point 1 ---'
++      !    WRITE(*,'(A,2F12.6)') 'SV(IND_G=1)          = ', SV(1)
++      !    WRITE(*,'(A,2F12.6)') 'PHASE_GRID(1, ORB=1) = ', PHASE_GRID(1, 1)
++
++      !    IF (NWANN >= 2) THEN
++      !       WRITE(*,'(A,2F12.6)') 'PHASE_GRID(1, ORB=2) = ', PHASE_GRID(1, 2)
++      !    ENDIF
++
++      !    WRITE(*,*) '========== PHASE DEBUG END =========='
++      ! ENDIF
++
++      ALLOCATE(V_R_SOFT(NP_GRID))
++      ALLOCATE(C_SOFT_BANDS(W%WDES%NB_TOT))
++
++      IF (W%WDES%LOVERL) ALLOCATE(V_R_HARD(NPRO_TOT))
++
++      NBANDS = WP%WDES%NBANDS
++
++      strips: DO NPOS = 1, NBANDS, NSTRIP
++         NSTRIP_ACT = MIN(NBANDS + 1 - NPOS, NSTRIP)
++
++         instrip: DO N = NPOS, NPOS + NSTRIP_ACT - 1
++            NP = N - NPOS + 1
++
++            IF (NQ == KPOINTS_FULL%NEQUIV(NQ)) THEN
++               CALL W1_COPY(ELEMENT(WP, WDESQ, N, ISP), WQ)
++            ELSE
++               CALL W1_ROTATE(WP, P, LATT_CUR, N, ISP, ROT_HANDLE, WQ)
++            ENDIF
++
++            CALL FFTWAV_W1(WQ)
++            CALL OVERL_AND_APPLY_PHASE_SHIFT(PHASE, T_INFO, CQIJ, WDESQ, WQ, WHAM%CPROJ(:, NP))
++
++            N_GLB = (N - 1)*W%WDES%NB_PAR + W%WDES%NB_LOW
++
++            DO L_ORB = 1, NWANN
++               C_SOFT_BANDS = CMPLX(0.0_q,0.0_q,q)
++
++               ! Sum the soft overlap over both internal spinor blocks.
++               DO ISPINOR = 0, W%WDES%NRSPINORS-1
++                  NPWS_K = ISPINOR*WDESK%GRID%MPLWV
++                  NPWS_Q = ISPINOR*WDESQ%GRID%MPLWV
++
++                  DO IND_G = 1, NP_GRID
++                     V_R_SOFT(IND_G) = WQ%CR(IND_G+NPWS_Q)* &
++                        PHASE_GRID(IND_G,L_ORB)*SV(IND_G)
++                  ENDDO
++
++                  DO M_GLB = 1, W%WDES%NB_TOT
++                     C_SOFT_BANDS(M_GLB) = C_SOFT_BANDS(M_GLB) + &
++                        ZDOTC(NP_GRID,WK_ALL(M_GLB)%CR(1+NPWS_K),1,V_R_SOFT,1)* &
++                        CMPLX(1.0_q/W%WDES%GRID%NPLWV,0.0_q,q)
++                  ENDDO
++               ENDDO
++
++               IF (W%WDES%LOVERL) THEN
++                  DO IPRO = 1, NPRO_TOT
++                     V_R_HARD(IPRO) = WHAM%CPROJ(IPRO,NP)*PHASE_ATOM(IPRO,L_ORB)
++                  ENDDO
++               ENDIF
++
++               DO M_GLB = 1, W%WDES%NB_TOT
++                  C_HARD = CMPLX(0.0_q,0.0_q,q)
++                  IF (W%WDES%LOVERL) C_HARD = &
++                     ZDOTC(NPRO_TOT,WK_ALL(M_GLB)%CPROJ,1,V_R_HARD,1)
++
++                  S(M_GLB,N_GLB,L_ORB) = C_SOFT_BANDS(M_GLB)+C_HARD
++               ENDDO
++            ENDDO
++         ENDDO instrip
++      ENDDO strips
++
++      CALLMPI( M_sum_g(WDESK%COMM_KIN, S(1,1,1), W%WDES%NB_TOT*W%WDES%NB_TOT*NWANN) )
++
++!**********************************************************************
++! Part 4: Release local work arrays.
++!**********************************************************************
++      IF (NK /= KPOINTS_FULL%NEQUIV(NK)) CALL DELWAVA(WK)
++
++      DO N = 1, W%WDES%NB_TOT
++         CALL DELWAV(WK_ALL(N), .TRUE.)
++      ENDDO
++
++      DEALLOCATE(WK_ALL, SV, PHASE_ATOM, PHASE_GRID)
++      DEALLOCATE(V_R_SOFT,C_SOFT_BANDS)
++
++      IF (ALLOCATED(V_R_HARD)) DEALLOCATE(V_R_HARD)
++
++      CALL DELWAV(WQ, .TRUE.)
++      CALL DELWAVA(WHAM)
++
++      RETURN
++      END SUBROUTINE CALC_OVERLAP_CLUSTER_BLAS
+ !******************** SUBROUTINE ***************************************
