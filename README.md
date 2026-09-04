@@ -86,7 +86,7 @@ LWANNIER_RUN = .TRUE.
 
 - Collinear spin-polarized calculations
 - Noncollinear calculations and spin–orbit coupling (SOC)
-- Disentanglement (These features have not yet undergone extensive testing. Validate the results with a small test case before using the patch in production calculations.)
+- Disentanglement (This feature has not yet undergone extensive testing. Validate the results with a small test case before using the patch in production calculations.)
 - `vasp_gam` is not supported because its real-valued wavefunction storage is incompatible with this patch.
 - If needed, use vasp_std for single-point calculations.
 
