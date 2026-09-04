@@ -93,6 +93,7 @@ LWANNIER_RUN = .TRUE.
 ## Documentation
     
 [Algorithm description zh-CN](docs/gamma-adaptive-algorithm.zh-CN.md)
+[Algorithm description en-US](docs/gamma-adaptive-algorithm.en-US.md)
 
 ## Disclaimer
 
