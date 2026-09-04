@@ -88,7 +88,7 @@ LWANNIER_RUN = .TRUE.
 - Noncollinear calculations and spin–orbit coupling (SOC)
 - Disentanglement (These features have not yet undergone extensive testing. Validate the results with a small test case before using the patch in production calculations.)
 - `vasp_gam` is not supported because its real-valued wavefunction storage is incompatible with this patch.
-- Use `vasp_std` for Gamma-point calculations.
+- If needed, use vasp_std for single-point calculations.
 
 ## Documentation
     
