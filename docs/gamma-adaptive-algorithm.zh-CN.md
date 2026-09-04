@@ -68,7 +68,7 @@ $$\mathcal F=\lbrace m\in\mathcal O\mid E_{\mathrm{froz}}^{\min}\leq\epsilon_m\l
 - $\mathcal G=\mathcal O\setminus\mathcal F$：non-frozen outer states 组成的子空间；
 - $L=J-M$：需要从 $\mathcal G$ 中选出的自由方向数。
 
-如果没有 frozen window，则 $\mathcal F=\varnothing$ 且 $M=0$。各维数满足
+各维数满足
 
 $$M\leq J\leq B\leq N.$$
 
