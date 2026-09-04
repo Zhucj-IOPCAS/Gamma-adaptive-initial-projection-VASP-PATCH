@@ -19,7 +19,7 @@ Gamma-adaptive 方法使用 Gamma 点 Bloch 波函数自动构造 Wannier 初始
 
 在 Gamma 点的 active Bloch 本征态中选择一个 $J$ 维子空间，其中 $J$ 是 Wannier 轨道数。
 
-$$|\phi_{n\Gamma}^{(S)}\rangle=\sum_{m=1}^{N}|\psi_{m\Gamma}\rangle S_{mn}, n=1,\ldots,J.$$
+$$\ket{\phi_{n\Gamma}^{(S)}}=\sum_{m=1}^{N}\ket{\psi_{m\Gamma}} S_{mn}, n=1,\ldots,J.$$
 
 其中，
 
@@ -35,7 +35,7 @@ Disentanglement 的目标是确定投影算符 $P$。
 
 Gamma 点虽然只有一个独立的晶体动量，但周期位置算符的信息仍可由一组连接 Gamma 点及其倒格矢像的 overlap 表示。对每个邻接倒空间向量 $\mathbf b$，定义
 
-$$M^{(b)}_{mn}=\langle\psi_{m\Gamma}|e^{-i\mathbf b\cdot\mathbf r}|\psi_{n\Gamma}\rangle.$$
+$$M^{(b)}_{mn}=\bra{\psi_{m\Gamma}}e^{-i\mathbf b\cdot\mathbf r}\ket{\psi_{n\Gamma}}.$$
 
 每个邻接向量对应一个几何权重 $w_b$。在完整 active Bloch 空间中，
 
@@ -49,7 +49,7 @@ $$M_S^{(b)}=S^\dagger M^{(b)}S\in\mathbb C^{J\times J}.$$
 
 Outer window 定义允许参与子空间选择的候选 Bloch 态集合
 
-$$\mathcal O=\{m\mid E_{\mathrm{win}}^{\min}\leq\epsilon_m\leq E_{\mathrm{win}}^{\max}\}.$$
+$$\mathcal O=\lbrace m\mid E_{\mathrm{win}}^{\min}\leq\epsilon_m\leq E_{\mathrm{win}}^{\max}\rbrace.$$
 
 目标子空间只能从 $\mathcal O$ 中选取，因此对所有 $m\notin\mathcal O$，必须有
 
@@ -57,7 +57,7 @@ $$S_{mn}=0.$$
 
 Frozen window 定义必须完整保留在目标子空间中的 Bloch 本征态集合
 
-$$\mathcal F=\{m\in\mathcal O\mid E_{\mathrm{froz}}^{\min}\leq\epsilon_m\leq E_{\mathrm{froz}}^{\max}\}.$$
+$$\mathcal F=\lbrace m\in\mathcal O\mid E_{\mathrm{froz}}^{\min}\leq\epsilon_m\leq E_{\mathrm{froz}}^{\max}\rbrace.$$
 
 记：
 
@@ -72,13 +72,13 @@ $$\mathcal F=\{m\in\mathcal O\mid E_{\mathrm{froz}}^{\min}\leq\epsilon_m\leq E_{
 
 $$M\leq J\leq B\leq N.$$
 
-Frozen 的含义是子空间包含关系。对每个 $f\in\mathcal F$，令 $|e_f\rangle$ 表示该 Bloch 本征态在 active-band 基底中的单位坐标向量，则要求
+Frozen 的含义是子空间包含关系。对每个 $f\in\mathcal F$，令 $\ket{e_f}$ 表示该 Bloch 本征态在 active-band 基底中的单位坐标向量，则要求
 
-$$P|e_f\rangle=|e_f\rangle.$$
+$$P\ket{e_f}=\ket{e_f}.$$
 
 设 frozen band indices 为 $f_1,\ldots,f_M$。把相应的单位坐标列组成
 
-$$F=(|e_{f_1}\rangle,\ldots,|e_{f_M}\rangle)\in\mathbb C^{N\times M}, F^\dagger F=I_M.$$
+$$F=(\ket{e_{f_1}},\ldots,\ket{e_{f_M}})\in\mathbb C^{N\times M}, F^\dagger F=I_M.$$
 
 Frozen 子空间的投影算符为
 
@@ -187,15 +187,15 @@ $$M_{\mathrm{S}}^{(b)}=S^\dagger M^{(b)}S.$$
 
 ### 1.2 Jacobi rotation：Gamma 初猜的 Foster-Boys 局域化
 
-将 disentanglement 得到的 $N_w=J$ 个正交态记为 $|\psi_{m\Gamma}\rangle$。Jacobi rotation 在这个固定子空间内构造 Gamma 点局域轨道
+将 disentanglement 得到的 $N_w=J$ 个正交态记为 $\ket{\psi_{m\Gamma}}$。Jacobi rotation 在这个固定子空间内构造 Gamma 点局域轨道
 
-$$|\phi_{\alpha}^{\Gamma}\rangle=\sum_{m=1}^{N_w}U_{m\alpha}^{(\Gamma)}|\psi_{m\Gamma}\rangle.$$
+$$\ket{\phi_{\alpha}^{\Gamma}}=\sum_{m=1}^{N_w}U_{m\alpha}^{(\Gamma)}\ket{\psi_{m\Gamma}}.$$
 
 #### 1.2.1 Gamma 点 Foster-Boys 泛函
 
 Jacobi rotation 前的 overlap 为
 
-$$M_{mn}^{(0,\mathbf b)}=\langle\psi_{m\Gamma}|e^{-i\mathbf b\cdot\mathbf r}|\psi_{n\Gamma}\rangle.$$
+$$M_{mn}^{(0,\mathbf b)}=\bra{\psi_{m\Gamma}}e^{-i\mathbf b\cdot\mathbf r}\ket{\psi_{n\Gamma}}.$$
 
 经过 $U^{(\Gamma)}$ 旋转后，
 
@@ -282,9 +282,10 @@ $$W\mathbf u_{\max}=\lambda_{\max}\mathbf u_{\max}.$$
 $$c=\sqrt{\frac{1+u_z}{2}},z=\frac{u_x+iu_y}{2c},$$
 
 则 $V$ 为：
-```math
-$$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
-```
+
+$$V=\begin{pmatrix}c & -z^\ast \\ 
+z & c\end{pmatrix}.$$
+
 对所有 $\mathbf b$ 迭代该轨道对的 overlap：
 
 $$M^{(\mathbf b)}\rightarrow V^\dagger M^{(\mathbf b)}V.$$
@@ -323,7 +324,7 @@ $$q_\alpha(\mathbf r_c,R)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_R(\mat
 
 给定目标电荷比例 $\eta$，对每个候选中心确定满足该条件的最小包络半径：
 
-$$R_\alpha(\mathbf r_c)=\min\{R\mid q_\alpha(\mathbf r_c,R)\geq\eta\}.$$
+$$R_\alpha(\mathbf r_c)=\min\lbrace R\mid q_\alpha(\mathbf r_c,R)\geq\eta\rbrace.$$
 
 中心搜索从多个候选位置分别开始，包括轨道电荷密度最大的位置和均匀分布在周期原胞中的位置。首先将候选位置按照包含目标电荷比例所需的最小包络半径排序。随后从包络半径较小的候选位置开始进行完整的自洽中心迭代。
 
@@ -366,17 +367,20 @@ $$\widetilde U_{\mathrm{total},m\alpha}^{(\Gamma)}=p_\alpha U_{\mathrm{total},m\
 #### 1.4.2 Spinor wannier 轨道的相位规范
 
 对于 spinor 轨道，写成
-```math
-$$\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,z}(\mathbf r)\\b_{\alpha,z}(\mathbf r)\end{pmatrix}.$$
-```
+
+$$\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,z}(\mathbf r)\\
+b_{\alpha,z}(\mathbf r)\end{pmatrix}.$$
+
 所有轨道使用同一个公共自旋基底 $V$：
-```math
-$$\Phi_{\alpha,V}^\Gamma(\mathbf r)=V^\dagger\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,V}(\mathbf r)\\b_{\alpha,V}(\mathbf r)\end{pmatrix}.$$
-```
+
+$$\Phi_{\alpha,V}^\Gamma(\mathbf r)=V^\dagger\Phi_{\alpha,z}^\Gamma(\mathbf r)=\begin{pmatrix}a_{\alpha,V}(\mathbf r)\\
+b_{\alpha,V}(\mathbf r)\end{pmatrix}.$$
+
 在该基底中，选取对称参考 spinor
-```math
-$$\chi_V(\theta,\phi)=e^{-i\pi/4}\begin{pmatrix}e^{-i\phi/2}\cos(\theta/2)\\e^{i\phi/2}\sin(\theta/2)\end{pmatrix}.$$
-```
+
+$$\chi_V(\theta,\phi)=e^{-i\pi/4}\begin{pmatrix}e^{-i\phi/2}\cos(\theta/2)\\
+e^{i\phi/2}\sin(\theta/2)\end{pmatrix}.$$
+
 spinor function表示为
 
 $$\Phi_{\alpha,V}^\Gamma(\mathbf r)=\sqrt{\rho_\alpha(\mathbf r)}e^{i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}\chi_V(\theta_{\alpha,V}(\mathbf r),\phi_{\alpha,V}(\mathbf r)).$$
@@ -420,9 +424,10 @@ $$K\mathbf n=\kappa_{\min}\mathbf n.$$
 $$c=\sqrt{\frac{1+n_z}{2}},$$
 
 $$z=\frac{n_x+in_y}{2c},$$
-```math
-$$V=\begin{pmatrix}c&-z^\ast\\z&c\end{pmatrix}.$$
-```
+
+$$V=\begin{pmatrix}c&-z^\ast\\
+z&c\end{pmatrix}.$$
+
 在确定公共主轴后，使用 doubled phase
 
 $$D_\alpha(\mathbf r)=e^{2i[\gamma_{\alpha,V}(\mathbf r)+\pi/4]}.$$
@@ -488,11 +493,11 @@ $$\psi_{n\mathbf k}^\ast(\mathbf r)\psi_{m\Gamma}(\mathbf r)=e^{-i\mathbf k\cdot
 
 经过 disentanglement、Jacobi rotation 和 phase fix 后，Gamma-adaptive Wannier 初猜为
 
-$$|g_{\alpha\mathbf 0}\rangle=\sum_{m=1}^{N}\widetilde U_{\mathrm{total},m\alpha}^{(\Gamma)}|\psi_{m\Gamma}\rangle.$$
+$$\ket{g_{\alpha\mathbf 0}}=\sum_{m=1}^{N}\widetilde U_{\mathrm{total},m\alpha}^{(\Gamma)}\ket{\psi_{m\Gamma}}.$$
 
 .amn 矩阵定义为全 $\mathbf k$ Bloch 态与该 Gamma-adaptive 初猜的 overlap：
 
-$$A_{n\alpha}^{(\mathbf k)}=\langle\psi_{n\mathbf k}|g_{\alpha\mathbf 0}\rangle.$$
+$$A_{n\alpha}^{(\mathbf k)}=\braket{\psi_{n\mathbf k}|g_{\alpha\mathbf 0}}.$$
 
 代入 Gamma 点初猜，得到
 
