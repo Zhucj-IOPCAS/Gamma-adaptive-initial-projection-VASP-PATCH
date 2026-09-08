@@ -1,4 +1,4 @@
-diff --git a/mlwf_original.F b/mlwf.2.8.F
+diff --git a/src/mlwf.F b/src/mlwf.F
 index 57cf4bd..9dfc3cb 100644
 --- a/src/mlwf.F
 +++ b/src/mlwf.F
@@ -1695,7 +1695,7 @@ index 57cf4bd..9dfc3cb 100644
 +#endif
 +
  !***********************************************************************
-diff --git a/pead_oroginal.F b/pead.1.0.F
+diff --git a/src/pead.F b/src/pead.F
 index 9ba933a..0114c2a 100644
 --- a/src/pead.F
 +++ b/src/pead.F
