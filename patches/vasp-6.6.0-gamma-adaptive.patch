@@ -1,7 +1,7 @@
-diff --git a/src/mlwf.F b/src/mlwf.F
-index 57cf4bd..ed89717 100644
---- a/src/mlwf.F
-+++ b/src/mlwf.F
+diff --git a/mlwf_original.F b/mlwf.2.8.F
+index 57cf4bd..9dfc3cb 100644
+--- a/mlwf_original.F
++++ b/mlwf.2.8.F
 @@ -11,3 +11,3 @@ MODULE mlwf
     ENUM, BIND(C)
 -      ENUMERATOR :: PROJ_UNKNOWN, PROJ_SCDM, PROJ_WANNIER90, PROJ_LOCPROJ, PROJ_LOCPROJAUTO
@@ -117,7 +117,7 @@ index 57cf4bd..ed89717 100644
 +   CALLMPI( M_bcast_d(MLWF%COMM,MLWF%WB_OUT,SIZE(MLWF%WB_OUT)) )
 +
     ALLOCATE(MLWF%EXCLUDE_BAND(MLWF%NB_TOT))
-@@ -1425,2 +1469,1893 @@ MODULE mlwf
+@@ -1425,2 +1469,1577 @@ MODULE mlwf
  
 +#ifndef gammareal
 +!***********************************************************************
@@ -177,7 +177,7 @@ index 57cf4bd..ed89717 100644
 +   ! I_KGAMMA(k_band,gamma_band,wannier,kpoint,spin) = <psi_{k_band,k}|chi_WS(tau_wannier)|psi_{gamma_band,Gamma}>
 +   COMPLEX(q), ALLOCATABLE :: I_KGAMMA(:,:,:,:,:)
 +   COMPLEX(q), ALLOCATABLE :: WF_SPINOR(:,:,:)
-+
++   
 +   NUM_WANN = MLWF%NUM_WANN
 +   NUM_BAND = MLWF%NB_TOT-MLWF%NEXCLB
 +
@@ -185,10 +185,10 @@ index 57cf4bd..ed89717 100644
 +   ! Stage A: Build a Gamma wavefunction container for Wannier90 setup.
 +   ! -------------------------------------------------------------------
 +   IK_GM = KPOINT_IN_FULL_GRID((/0.0_q, 0.0_q, 0.0_q/), KPOINTS_FULL)
-+
++   
 +   IF (IO%IU0 >= 0) THEN
-+      WRITE(IO%IU0,*) '========== BEGIN GAMMA WANNIER SETUP =========='
-+      WRITE(IO%IU0,*) 'Building Gamma-only Wannier Scheme. IK_GM = ', IK_GM
++      WRITE(IO%IU0,*) 'Building gamma wannier setup...'
++      !WRITE(IO%IU0,*) 'Building Gamma-only Wannier Scheme. IK_GM = ', IK_GM
 +   ENDIF
 +
 +   WDES_GM = WDES
@@ -228,7 +228,7 @@ index 57cf4bd..ed89717 100644
 +   CALL MLWF_WANNIER90_SETUP(P_MLWF_GM, WDES_GM, W_GM, KPOINTS_GM, P, CQIJ, T_INFO, LATT_CUR, INFO, IO)
 +   CALL MLWF_WANNIER90_EIG(P_MLWF_GM, W_GM, .FALSE., IO)
 +   CALL MLWF_WANNIER90_MMN(P_MLWF_GM, WDES_GM, W_GM, P, CQIJ, T_INFO, LATT_CUR, .FALSE., INFO, IO)
-+
++   
 +   ! -----------------------------------------------------------
 +   ! Stage C: perform Gamma-Wavefunction Jacobi Localization.
 +   ! -----------------------------------------------------------
@@ -239,7 +239,7 @@ index 57cf4bd..ed89717 100644
 +   U_GM_DATA   = CMPLX(0.0_q,0.0_q,q)
 +   TAU_WANN_CART = 0.0_q
 +   TAU_WANN_FRAC = 0.0_q
-+
++   
 +   DO ISP_IDX = 1, WDES%ISPIN
 +      ! Only the master node performs the Gamma Jacobi localization.
 +      IF (WDES%COMM%NODE_ME == 1) THEN
@@ -335,10 +335,10 @@ index 57cf4bd..ed89717 100644
 +   !    CALL SYSTEM_CLOCK(T1)
 +   !    IF (IO%IU0 >= 0) WRITE(IO%IU0,'(A,F16.6,A)') &
 +   !       'PEAD GAMMA OVERLAP TIME = ',REAL(T1-T0,q)/REAL(TR,q),' s'
-+   ! END BLOCK TIMER
++   ! END BLOCK TIMER 
 +   CALL MLWF_GAMMA_ADAPTIVE_CALC_OVERLAP(MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,TAU_WANN_FRAC,I_KGAMMA,IO)
 +   CALL MLWF_GAMMA_ADAPTIVE_BUILD_AMN(MLWF,I_KGAMMA,U_GM_DATA,IO)
-+
++   
 +   IF (ALLOCATED(I_KGAMMA)) DEALLOCATE(I_KGAMMA)
 +   IF (ALLOCATED(U_GM_DATA))   DEALLOCATE(U_GM_DATA)
 +   IF (ALLOCATED(TAU_WANN_CART)) DEALLOCATE(TAU_WANN_CART)
@@ -398,17 +398,18 @@ index 57cf4bd..ed89717 100644
 +                              MLWF_GM%eigenvalues(I_BAND,1,ISP_IDX)<=MLWF_GM%DIS_FROZ_MAX
 +      ENDDO
 +   ENDIF
-+
++   
 +   NUM_OUTER=COUNT(OUTER_MASK)
 +   NUM_INNER=COUNT(INNER_MASK)
 +
 +   IF (IO%IU0>=0) THEN
-+      WRITE(IO%IU0,*) '========== GAMMA DISENTANGLEMENT WINDOWS =========='
-+      WRITE(IO%IU0,'(A,I6)') 'ISP_IDX: ',ISP_IDX
-+      WRITE(IO%IU0,'(A,2F18.8)') 'outer window min/max: ',MLWF_GM%DIS_WIN_MIN,MLWF_GM%DIS_WIN_MAX
-+      WRITE(IO%IU0,'(A,L2)') 'frozen states: ',MLWF_GM%FROZEN_STATES
-+      WRITE(IO%IU0,'(A,2F18.8)') 'frozen window min/max: ', MLWF_GM%DIS_FROZ_MIN,MLWF_GM%DIS_FROZ_MAX
-+      WRITE(IO%IU0,'(A,5I8)') 'N_BAND / NUM_OUTER / N_WANN / NUM_INNER / NUM_SELECT: ',NUM_BAND,NUM_OUTER,NUM_WANN,NUM_INNER,NUM_WANN-NUM_INNER
++      WRITE(IO%IU0,*) 'Building gamma disentanglement setup...'
++      !WRITE(IO%IU0,'(A,I6)') 'ISP_IDX: ',ISP_IDX
++      !WRITE(IO%IU0,'(A,2F18.8)') 'outer window min/max: ',MLWF_GM%DIS_WIN_MIN,MLWF_GM%DIS_WIN_MAX
++      !WRITE(IO%IU0,'(A,L2)') 'frozen states: ',MLWF_GM%FROZEN_STATES
++      !WRITE(IO%IU0,'(A,2F18.8)') 'frozen window min/max: ', MLWF_GM%DIS_FROZ_MIN,MLWF_GM%DIS_FROZ_MAX                                
++      !WRITE(IO%IU0,'(A,5I2)') 'BAND / OUTER / WANN / INNER / SELECTED: ', &
++      !   NUM_BAND,NUM_OUTER,NUM_WANN,NUM_INNER,NUM_WANN-NUM_INNER
 +      WRITE(IO%IU0,*) 'active_band   eigenvalue   outer   inner(frozen)'
 +      DO I_BAND=1,NUM_BAND
 +         WRITE(IO%IU0,'(I10,2X,F18.9,4X,L2,5X,L2)') &
@@ -478,12 +479,12 @@ index 57cf4bd..ed89717 100644
 +   NUM_FREE=NUM_OUTER-NUM_INNER
 +   NUM_SELECT=NUM_WANN-NUM_INNER
 +   NUM_NEIGH=MLWF_GM%NNTOT
-+
 +   IF (NUM_OUTER<NUM_WANN) &
 +      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: outer window contains fewer states than NUM_WANN.')
 +   IF (NUM_INNER>NUM_WANN) &
 +      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: frozen window contains more states than NUM_WANN.')
-+   IF (SIZE(MLWF_GM%WB_OUT)/=NUM_NEIGH) &
++   !IF (IO%IU0>=0) WRITE(IO%IU0,*) 'MLWF_GM%WB_OUT',MLWF_GM%WB_OUT,'NUM_NEIGH',NUM_NEIGH
++   IF (SIZE(MLWF_GM%WB_OUT)<NUM_NEIGH) &
 +      CALL vtutor%error('MLWF_GAMMA_ADAPTIVE_DISENTANGLE: invalid Gamma neighbor weights.')
 +   IF (SIZE(MLWF_GM%M_matrix,1)/=NUM_BAND .OR. SIZE(MLWF_GM%M_matrix,2)/=NUM_BAND .OR. &
 +       SIZE(MLWF_GM%M_matrix,3)/=NUM_NEIGH .OR. SIZE(MLWF_GM%M_matrix,4)/=1 .OR. SIZE(MLWF_GM%M_matrix,5)<ISP) &
@@ -494,16 +495,6 @@ index 57cf4bd..ed89717 100644
 +
 +   ALLOCATE(S_GM_DISENT(NUM_BAND,NUM_WANN))
 +   S_GM_DISENT=CMPLX(0.0_q,0.0_q,q)
-+
-+   IF (IO%IU0>=0) THEN
-+      WRITE(IO%IU0,*) '========== GAMMA SMV DISENTANGLEMENT =========='
-+      WRITE(IO%IU0,'(A,4I8)') 'NUM_OUTER / N_WANNS / NUM_INNER / NUM_SELECT: ',NUM_OUTER,NUM_WANN,NUM_INNER,NUM_SELECT
-+      WRITE(IO%IU0,'(A,I8)') 'dis_num_iter: ',DIS_NUM_ITER
-+      WRITE(IO%IU0,'(A,F12.6)') 'dis_mix_ratio: ',DIS_MIX_RATIO
-+      WRITE(IO%IU0,'(A,I8)') 'dis_conv_window: ',DIS_CONV_WINDOW
-+      WRITE(IO%IU0,'(A,ES14.5)') 'dis_conv_tol: ',DIS_CONV_TOL
-+      WRITE(IO%IU0,'(A,ES14.5)') 'dis_projector_tol: ',DIS_PROJECTOR_TOL
-+   ENDIF
 +
 +   ALLOCATE(FREE_MASK(NUM_BAND))
 +   FREE_MASK=OUTER_MASK .AND. .NOT.INNER_MASK
@@ -530,6 +521,15 @@ index 57cf4bd..ed89717 100644
 +   ELSEIF (NUM_SELECT==NUM_FREE) THEN
 +      IF (IO%IU0>=0) WRITE(IO%IU0,*) 'Gamma SMV: skipped because NUM_SELECT = NUM_FREE.'
 +   ELSE
++      IF (IO%IU0>=0) THEN
++         WRITE(IO%IU0,*) 'Starting gamma SMV Disentanglement...'
++         WRITE(IO%IU0,'(A,I8)') 'dis_num_iter: ',DIS_NUM_ITER
++         WRITE(IO%IU0,'(A,F12.6)') 'dis_mix_ratio: ',DIS_MIX_RATIO
++         WRITE(IO%IU0,'(A,I8)') 'dis_conv_window: ',DIS_CONV_WINDOW
++         WRITE(IO%IU0,'(A,ES14.5)') 'dis_conv_tol: ',DIS_CONV_TOL
++         WRITE(IO%IU0,'(A,ES14.5)') 'dis_projector_tol: ',DIS_PROJECTOR_TOL
++      ENDIF
++
 +      ALLOCATE(S_NEW(NUM_BAND,NUM_WANN))
 +      ALLOCATE(P_OLD(NUM_BAND,NUM_BAND),P_NEW(NUM_BAND,NUM_BAND))
 +      ALLOCATE(Z_NEW(NUM_BAND,NUM_BAND),Z_MIXED(NUM_BAND,NUM_BAND))
@@ -741,8 +741,8 @@ index 57cf4bd..ed89717 100644
 +   ENDDO
 +
 +   IF (IO%IU0 >= 0) THEN
-+      WRITE(IO%IU0,*) '========== STARTING SU(2) TENSOR JACOBI =========='
-+      WRITE(IO%IU0,*) 'Collinear spin channel ISP = ',ISP
++      WRITE(IO%IU0,*) 'Starting gamma SU(2) jacobi rotation...'
++      !WRITE(IO%IU0,'(A,I3)') 'Collinear spin channel ISP = ',ISP
 +   ENDIF
 +
 +   SPREAD_OLD = 1.0E10_q
@@ -909,10 +909,10 @@ index 57cf4bd..ed89717 100644
 +      DELTA_SPREAD = ABS(SPREAD_OLD-SPREAD_NEW)
 +      SPREAD_OLD = SPREAD_NEW
 +
-+      IF (IO%IU0 >= 0) THEN
-+         WRITE(IO%IU0,'(A,I4,A,F15.8,A,E12.4)') &
-+            ' ITER: ',ITER,' SPREAD: ',SPREAD_NEW,' SPREAD_DELTA: ',DELTA_SPREAD
-+      ENDIF
++      !IF (IO%IU0 >= 0) THEN
++      !   WRITE(IO%IU0,'(A,I3,A,F12.8,A,E12.4)') &
++      !      'Jacobi iter: ',ITER,' Spread: ',SPREAD_NEW,' Delta_Spread: ',DELTA_SPREAD
++      !ENDIF
 +
 +      IF (DELTA_SPREAD < CONV_TOL .AND. ITER > 1) EXIT jacobi_iteration
 +
@@ -957,7 +957,7 @@ index 57cf4bd..ed89717 100644
 +   IF (SIZE(U_GM,1)/=NUM_BAND .OR. SIZE(U_GM,2)/=NUM_WANN) THEN
 +      CALL vtutor%error('MLWF_GAMMA_BUILD_REALSPACE_ORBITALS: invalid U_GM dimensions.')
 +   ENDIF
-+
++   
 +   CALL SETWDES(W_GM%WDES,LOC_WDESK,1)
 +
 +   ALLOCATE(LOC_WK_ALL(NB_TOT))
@@ -1016,10 +1016,8 @@ index 57cf4bd..ed89717 100644
 +
 + END SUBROUTINE MLWF_GAMMA_ADAPTIVE_REALSPACE_SPINOR
 +!***********************************************************************
-+!> Locate each Gamma Wannier orbital in periodic real space.
-+!>
-+!> Multiple seeds are screened by the minimum Fermi-envelope radius
-+!> required to contain TARGET_CHARGE of the orbital density.
++!> Locate each Gamma Wannier orbital by minimizing its periodic
++!> real-space second moment.
 +!***********************************************************************
 + SUBROUTINE MLWF_GAMMA_ADAPTIVE_LOCATE_CENTER(WF_SPINOR,WDES_GM,LATT_CUR,ISP,TAU_WANN_FRAC,IO)
 +   USE base
@@ -1027,129 +1025,63 @@ index 57cf4bd..ed89717 100644
 +   USE lattice
 +   USE wave_high
 +   USE tutor, ONLY: vtutor
++
 +   IMPLICIT NONE
 +
 +   COMPLEX(q), INTENT(IN) :: WF_SPINOR(:,:,:)
 +   TYPE(wavedes), INTENT(IN) :: WDES_GM
 +   TYPE(latt), INTENT(IN) :: LATT_CUR
 +   INTEGER, INTENT(IN) :: ISP
-+   REAL(q), INTENT(OUT) :: TAU_WANN_FRAC(:,:)
++   REAL(q), INTENT(OUT) :: TAU_WANN_FRAC(:,:) 
 +   TYPE(in_struct), INTENT(IN) :: IO
 +
-+   INTEGER, PARAMETER :: N_SEED_AXIS=3
-+   INTEGER, PARAMETER :: MAX_CANDIDATES=1+N_SEED_AXIS**3
-+   INTEGER, PARAMETER :: N_REFINED_CANDIDATES=4
-+   INTEGER, PARAMETER :: MAX_CENTER_ITER=100
-+   INTEGER, PARAMETER :: MAX_BACKTRACK=20
-+   INTEGER, PARAMETER :: RADIUS_BISECT_ITER=32
-+   INTEGER, PARAMETER :: LATTICE_SEARCH_RANGE=2
++   INTEGER, PARAMETER :: MAX_CENTER_ITER=200
 +
-+   REAL(q), PARAMETER :: TARGET_CHARGE=0.87_q
-+   REAL(q), PARAMETER :: SEARCH_MARGIN_GRID_STEPS=6.0_q
-+   REAL(q), PARAMETER :: RADIUS_WARNING_FRACTION=0.80_q
-+   REAL(q), PARAMETER :: SMEAR_RADIUS_FRACTION=0.04_q
++   ! CENTER_MIXING=1 gives the standard undamped Lloyd iteration.
++   REAL(q), PARAMETER :: CENTER_MIXING=1.00_q
 +   REAL(q), PARAMETER :: CENTER_CONV_TOL=1.0E-7_q
-+   REAL(q), PARAMETER :: RADIUS_TIE_TOL=1.0E-7_q
 +
-+   INTEGER :: NP_GRID,NRSPINORS,NUM_WANN,NX,NY,NZ
-+   INTEGER :: IW,ISPINOR,IND_G,N1,N2,N3,I1,I2,I3
-+   INTEGER :: I_CANDIDATE,I_ORDER,N_CANDIDATE,N_VALID,N_REFINED
-+   INTEGER :: ITER,BACKTRACK,SEED_STRIDE,TEMP_INDEX
-+   REAL(q) :: RHO_MAX,GRID_STEP,SHORTEST_TRANSLATION,R_INJECT,R_COVER,R_SEARCH_MAX
-+   REAL(q), PARAMETER :: SMEAR_GRID_FRACTION=0.20_q
-+   REAL(q) :: TRANSLATION(3),TRANSLATION_NORM
-+   REAL(q) :: GRID_FRAC_COVER(3),DELTA_CART_COVER(3),DISTANCE_COVER
-+   REAL(q) :: SEED(3),CENTER(3),TRIAL_CENTER(3),BEST_CENTER(3)
-+   REAL(q) :: SHIFT_CART(3),TRIAL_SHIFT_CART(3)
-+   REAL(q) :: RADIUS,TRIAL_RADIUS,BEST_RADIUS
-+   REAL(q) :: SMEAR,TRIAL_SMEAR,BEST_SMEAR
-+   REAL(q) :: CHARGE_FRACTION,TRIAL_CHARGE_FRACTION,BEST_CHARGE_FRACTION
-+   REAL(q) :: SECOND_MOMENT,TRIAL_SECOND_MOMENT,BEST_SECOND_MOMENT
-+   REAL(q) :: SHIFT_NORM,TRIAL_SHIFT_NORM,STEP_SCALE,RADIUS_ACCEPT_TOL
-+   LOGICAL :: VALID,TRIAL_VALID,ACCEPTED,CONVERGED,BEST_CONVERGED
++   INTEGER :: NP_GRID,NRSPINORS,NUM_WANN
++   INTEGER :: NX,NY,NZ
++   INTEGER :: IW,ISPINOR,IND_G
++   INTEGER :: N1,N2,N3
++   INTEGER :: I1,I2,I3,I_DIR
++   INTEGER :: ITER,INDEX_GRID
++   INTEGER :: BASE_IMAGE(3)
 +
++   REAL(q) :: TOTAL_CHARGE,RHO_VALUE
++   REAL(q) :: CENTER(3),CENTER_CART(3),TAU_WANN_CART(3)
++   REAL(q) :: GRID_FRAC(3),D_FRAC(3)
++   REAL(q) :: D_CART(3),D_CART_MIN(3)
++   REAL(q) :: D_TEST,D_MIN
++   REAL(q) :: CENTROID_SHIFT_CART(3)
++   REAL(q) :: MIXED_SHIFT_CART(3)
++   REAL(q) :: SHIFT_NORM,SPREAD
++   
 +   REAL(q), ALLOCATABLE :: RHO_GRID(:)
-+   REAL(q), ALLOCATABLE :: SEED_FRAC(:,:),SCREEN_RADIUS(:)
-+   REAL(q), ALLOCATABLE :: SAMPLE_RHO(:),SAMPLE_DISTANCE(:),SAMPLE_DELTA_CART(:,:)
-+   INTEGER, ALLOCATABLE :: CANDIDATE_ORDER(:)
-+   LOGICAL, ALLOCATABLE :: SCREEN_VALID(:)
++
++   LOGICAL :: CONVERGED
 +
 +   NP_GRID=SIZE(WF_SPINOR,1)
 +   NRSPINORS=SIZE(WF_SPINOR,2)
 +   NUM_WANN=SIZE(WF_SPINOR,3)
 +
-+   IF (NP_GRID/=WDES_GM%GRID%RL%NP) THEN
++   IF (NP_GRID/=WDES_GM%GRID%RL%NP) &
 +      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid real-space grid size.')
-+   ENDIF
-+
-+   IF (NRSPINORS/=1 .AND. NRSPINORS/=2) THEN
++   IF (NRSPINORS/=1 .AND. NRSPINORS/=2) &
 +      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid NRSPINORS.')
-+   ENDIF
-+
-+   IF (SIZE(TAU_WANN_FRAC,1)/=3 .OR. SIZE(TAU_WANN_FRAC,2)/=NUM_WANN) THEN
++   IF (NRSPINORS/=WDES_GM%NRSPINORS) &
++      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: inconsistent NRSPINORS.')
++   IF (SIZE(TAU_WANN_FRAC,1)/=3 .OR. SIZE(TAU_WANN_FRAC,2)/=NUM_WANN) &
 +      CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: invalid TAU_WANN_FRAC dimensions.')
-+   ENDIF
 +
 +   NX=WDES_GM%GRID%NGX
 +   NY=WDES_GM%GRID%NGY
 +   NZ=WDES_GM%GRID%NGZ
 +
-+   GRID_STEP=MAX(SQRT(SUM((LATT_CUR%A(:,1)/REAL(NX,q))**2)), &
-+                 SQRT(SUM((LATT_CUR%A(:,2)/REAL(NY,q))**2)), &
-+                 SQRT(SUM((LATT_CUR%A(:,3)/REAL(NZ,q))**2)))
-+
-+   SHORTEST_TRANSLATION=HUGE(1.0_q)
-+
-+   DO I1=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
-+      DO I2=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
-+         DO I3=-LATTICE_SEARCH_RANGE,LATTICE_SEARCH_RANGE
-+            IF (I1==0 .AND. I2==0 .AND. I3==0) CYCLE
-+
-+            TRANSLATION=REAL(I1,q)*LATT_CUR%A(:,1)+REAL(I2,q)*LATT_CUR%A(:,2)+REAL(I3,q)*LATT_CUR%A(:,3)
-+            TRANSLATION_NORM=SQRT(SUM(TRANSLATION**2))
-+            SHORTEST_TRANSLATION=MIN(SHORTEST_TRANSLATION,TRANSLATION_NORM)
-+         ENDDO
-+      ENDDO
-+   ENDDO
-+
-+   R_INJECT=0.5_q*SHORTEST_TRANSLATION
-+   R_COVER=0.0_q
-+   CENTER=0.0_q
-+
-+   DO N3=0,NZ-1
-+      DO N2=0,NY-1
-+         DO N1=0,NX-1
-+            IND_G=N1+N2*NX+N3*NX*NY+1
-+            IF (IND_G>NP_GRID) CYCLE
-+
-+            GRID_FRAC_COVER=(/REAL(N1,q)/REAL(NX,q),REAL(N2,q)/REAL(NY,q),REAL(N3,q)/REAL(NZ,q)/)
-+            CALL MINIMUM_IMAGE(GRID_FRAC_COVER,CENTER,DELTA_CART_COVER,DISTANCE_COVER)
-+            R_COVER=MAX(R_COVER,DISTANCE_COVER)
-+         ENDDO
-+      ENDDO
-+   ENDDO
-+
-+   R_SEARCH_MAX=R_COVER+SEARCH_MARGIN_GRID_STEPS*GRID_STEP
-+   SEED_STRIDE=MAX(1,MIN(NX,NY,NZ)/20)
-+
 +   ALLOCATE(RHO_GRID(NP_GRID))
-+   ALLOCATE(SEED_FRAC(3,MAX_CANDIDATES),SCREEN_RADIUS(MAX_CANDIDATES))
-+   ALLOCATE(CANDIDATE_ORDER(MAX_CANDIDATES),SCREEN_VALID(MAX_CANDIDATES))
-+   ALLOCATE(SAMPLE_RHO(NP_GRID),SAMPLE_DISTANCE(NP_GRID),SAMPLE_DELTA_CART(3,NP_GRID))
-+
 +   TAU_WANN_FRAC=0.0_q
-+
-+   IF (IO%IU0>=0) THEN
-+      WRITE(IO%IU0,*) '========== PERIODIC FERMI CENTER SEARCH =========='
-+      WRITE(IO%IU0,'(A,F10.6)') 'target charge fraction: ',TARGET_CHARGE
-+      WRITE(IO%IU0,'(A,F12.6)') 'maximum real-space grid step: ',GRID_STEP
-+      WRITE(IO%IU0,'(A,F12.6)') 'shortest lattice translation: ',SHORTEST_TRANSLATION
-+      WRITE(IO%IU0,'(A,F12.6)') 'injectivity radius: ',R_INJECT
-+      WRITE(IO%IU0,'(A,F12.6)') 'WS covering radius: ',R_COVER
-+      WRITE(IO%IU0,'(A,F12.6)') 'maximum searched radius: ',R_SEARCH_MAX
-+      WRITE(IO%IU0,'(A,I6)') 'coarse seed-grid stride: ',SEED_STRIDE
-+   ENDIF
-+
++   IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Locating centers...'
 +   wannier_loop: DO IW=1,NUM_WANN
 +      RHO_GRID=0.0_q
 +
@@ -1157,364 +1089,118 @@ index 57cf4bd..ed89717 100644
 +         RHO_GRID=RHO_GRID+REAL(WF_SPINOR(:,ISPINOR,IW)*CONJG(WF_SPINOR(:,ISPINOR,IW)),q)
 +      ENDDO
 +
-+      RHO_MAX=MAXVAL(RHO_GRID)
++      TOTAL_CHARGE=SUM(RHO_GRID)
++
++      IF (TOTAL_CHARGE<=0.0_q) &
++         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: Wannier charge is zero.')
++         
++      !---------------------------------------------------------------
++      ! Use the maximum-density grid point as the initial center.
++      !---------------------------------------------------------------
 +      IND_G=MAXLOC(RHO_GRID,DIM=1)
++
 +      N3=(IND_G-1)/(NX*NY)
 +      N2=((IND_G-1)-N3*NX*NY)/NX
 +      N1=IND_G-1-N2*NX-N3*NX*NY
 +
-+      N_CANDIDATE=0
-+      SEED=(/REAL(N1,q)/REAL(NX,q),REAL(N2,q)/REAL(NY,q),REAL(N3,q)/REAL(NZ,q)/)
-+      CALL ADD_SEED(SEED)
++      CENTER=(/REAL(N1,q)/REAL(NX,q), &
++               REAL(N2,q)/REAL(NY,q), &
++               REAL(N3,q)/REAL(NZ,q)/)
 +
-+      DO I3=0,N_SEED_AXIS-1
-+         DO I2=0,N_SEED_AXIS-1
-+            DO I1=0,N_SEED_AXIS-1
-+               SEED=(/ (REAL(I1,q)+0.5_q)/REAL(N_SEED_AXIS,q), &
-+                        (REAL(I2,q)+0.5_q)/REAL(N_SEED_AXIS,q), &
-+                        (REAL(I3,q)+0.5_q)/REAL(N_SEED_AXIS,q) /)
-+               CALL ADD_SEED(SEED)
-+            ENDDO
-+         ENDDO
-+      ENDDO
++      CONVERGED=.FALSE.
 +
-+      SCREEN_RADIUS=HUGE(1.0_q)
-+      SCREEN_VALID=.FALSE.
++      center_iteration: DO ITER=1,MAX_CENTER_ITER
 +
-+      DO I_CANDIDATE=1,N_CANDIDATE
-+         CALL EVALUATE_CENTER(SEED_FRAC(:,I_CANDIDATE),SEED_STRIDE,RADIUS,SMEAR,SHIFT_CART, &
-+                              CHARGE_FRACTION,SECOND_MOMENT,VALID)
++         CENTROID_SHIFT_CART=0.0_q
++         SPREAD=0.0_q
 +
-+         SCREEN_RADIUS(I_CANDIDATE)=RADIUS
-+         SCREEN_VALID(I_CANDIDATE)=VALID
-+         CANDIDATE_ORDER(I_CANDIDATE)=I_CANDIDATE
++         !------------------------------------------------------------
++         ! Unwrap every real-space point into the local WS-like cell
++         ! centered at CENTER, and accumulate the charge centroid and
++         ! second moment.
++         !------------------------------------------------------------
++         DO N3=0,NZ-1
++            DO N2=0,NY-1
++               DO N1=0,NX-1
++                  INDEX_GRID=N1+N2*NX+N3*NX*NY+1
 +
-+         ! IF (IO%IU0>=0) THEN
-+         !    IF (VALID) THEN
-+         !       WRITE(IO%IU0,'(A,I4,A,3F10.6,A,F11.6,A,F10.6)') 'WF ',IW,' seed: ',SEED_FRAC(:,I_CANDIDATE), &
-+         !          '  coarse radius: ',RADIUS,'  charge: ',CHARGE_FRACTION
-+         !    ELSE
-+         !       WRITE(IO%IU0,'(A,I4,A,3F10.6,A,F10.6)') 'WF ',IW,' seed: ',SEED_FRAC(:,I_CANDIDATE), &
-+         !          '  invalid, maximum captured charge: ',CHARGE_FRACTION
-+         !    ENDIF
-+         ! ENDIF
++                  IF (INDEX_GRID>NP_GRID) THEN
++                     CALL vtutor%alert('MLWF_GAMMA_LOCATE_CENTER: INDEX_GRID>NP_GRID.')
++                     CYCLE
++                  ENDIF
 +
-+      ENDDO
++                  RHO_VALUE=RHO_GRID(INDEX_GRID)
 +
-+      N_VALID=COUNT(SCREEN_VALID(1:N_CANDIDATE))
++                  GRID_FRAC=(/REAL(N1,q)/REAL(NX,q), &
++                              REAL(N2,q)/REAL(NY,q), &
++                              REAL(N3,q)/REAL(NZ,q)/)
 +
-+      IF (N_VALID==0) THEN
-+         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: no seed can contain the target charge inside the searched radius.')
-+      ENDIF
++                  BASE_IMAGE=NINT(CENTER-GRID_FRAC)
 +
-+      DO I_ORDER=2,N_CANDIDATE
-+         TEMP_INDEX=CANDIDATE_ORDER(I_ORDER)
-+         I_CANDIDATE=I_ORDER-1
++                  D_MIN=HUGE(1.0_q)
++                  D_CART_MIN=0.0_q
 +
-+         DO WHILE (I_CANDIDATE>=1)
-+            IF (SCREEN_RADIUS(CANDIDATE_ORDER(I_CANDIDATE))<=SCREEN_RADIUS(TEMP_INDEX)) EXIT
-+            CANDIDATE_ORDER(I_CANDIDATE+1)=CANDIDATE_ORDER(I_CANDIDATE)
-+            I_CANDIDATE=I_CANDIDATE-1
-+         ENDDO
++                  DO I1=-1,1
++                     DO I2=-1,1
++                        DO I3=-1,1
++                           D_FRAC=GRID_FRAC+REAL(BASE_IMAGE+(/I1,I2,I3/),q)-CENTER
++                           D_CART=MATMUL(LATT_CUR%A,D_FRAC)
++                           D_TEST=DOT_PRODUCT(D_CART,D_CART)
++                           IF (D_TEST<D_MIN) THEN
++                              D_MIN=D_TEST
++                              D_CART_MIN=D_CART
++                           ENDIF
++                        ENDDO
++                     ENDDO
++                  ENDDO
 +
-+         CANDIDATE_ORDER(I_CANDIDATE+1)=TEMP_INDEX
-+      ENDDO
++                  CENTROID_SHIFT_CART=CENTROID_SHIFT_CART+RHO_VALUE*D_CART_MIN
++                  SPREAD=SPREAD+RHO_VALUE*D_MIN
 +
-+      BEST_RADIUS=HUGE(1.0_q)
-+      BEST_SECOND_MOMENT=HUGE(1.0_q)
-+      BEST_SMEAR=0.0_q
-+      BEST_CHARGE_FRACTION=0.0_q
-+      BEST_CENTER=0.0_q
-+      BEST_CONVERGED=.FALSE.
-+      N_REFINED=0
-+
-+      refine_candidates: DO I_ORDER=1,N_CANDIDATE
-+         I_CANDIDATE=CANDIDATE_ORDER(I_ORDER)
-+         IF (.NOT.SCREEN_VALID(I_CANDIDATE)) CYCLE
-+
-+         N_REFINED=N_REFINED+1
-+         IF (N_REFINED>N_REFINED_CANDIDATES) EXIT refine_candidates
-+
-+         CENTER=SEED_FRAC(:,I_CANDIDATE)
-+         CALL EVALUATE_CENTER(CENTER,1,RADIUS,SMEAR,SHIFT_CART,CHARGE_FRACTION,SECOND_MOMENT,VALID)
-+         IF (.NOT.VALID) CYCLE
-+
-+         CONVERGED=.FALSE.
-+
-+         center_iteration: DO ITER=1,MAX_CENTER_ITER
-+            SHIFT_NORM=SQRT(SUM(SHIFT_CART**2))
-+
-+            ! IF (IO%IU0>=0) THEN
-+            !    WRITE(IO%IU0,'(A,I4,A,I4,A,F11.6,A,ES12.4,A,F10.6)') 'WF ',IW,' candidate ',N_REFINED, &
-+            !       '  radius: ',RADIUS,'  shift: ',SHIFT_NORM,'  charge: ',CHARGE_FRACTION
-+            ! ENDIF
-+
-+            IF (SHIFT_NORM<CENTER_CONV_TOL) THEN
-+               CONVERGED=.TRUE.
-+               EXIT center_iteration
-+            ENDIF
-+
-+            STEP_SCALE=1.0_q
-+            ACCEPTED=.FALSE.
-+            RADIUS_ACCEPT_TOL=1.0E-9_q*MAX(1.0_q,RADIUS)
-+
-+            DO BACKTRACK=1,MAX_BACKTRACK
-+               DO I1=1,3
-+                  TRIAL_CENTER(I1)=CENTER(I1)+STEP_SCALE*DOT_PRODUCT(LATT_CUR%B(:,I1),SHIFT_CART)/TPI
 +               ENDDO
-+
-+               TRIAL_CENTER=MOD(TRIAL_CENTER+10.0_q,1.0_q)
-+               CALL EVALUATE_CENTER(TRIAL_CENTER,1,TRIAL_RADIUS,TRIAL_SMEAR,TRIAL_SHIFT_CART, &
-+                                    TRIAL_CHARGE_FRACTION,TRIAL_SECOND_MOMENT,TRIAL_VALID)
-+
-+               TRIAL_SHIFT_NORM=SQRT(SUM(TRIAL_SHIFT_CART**2))
-+               IF (TRIAL_VALID .AND. (TRIAL_SHIFT_NORM<SHIFT_NORM .OR. TRIAL_RADIUS<=RADIUS+RADIUS_ACCEPT_TOL)) THEN
-+                  ACCEPTED=.TRUE.
-+                  EXIT
-+               ENDIF
-+
-+               STEP_SCALE=0.5_q*STEP_SCALE
 +            ENDDO
-+            ! IF (ACCEPTED .AND. IO%IU0>=0) THEN
-+            !    WRITE(IO%IU0,'(A,F12.8,A,ES13.5,A,ES13.5)') 'accepted scale: ',STEP_SCALE, &
-+            !       '  Cartesian displacement: ',STEP_SCALE*SHIFT_NORM,'  new shift: ',TRIAL_SHIFT_NORM
-+            ! ENDIF
-+            IF (.NOT.ACCEPTED .AND. IO%IU0>=0) THEN
-+               WRITE(IO%IU0,'(A,I4,A,I4,A,ES13.5)') 'WF ',IW,' candidate ',N_REFINED, &
-+                  ' stopped because backtracking failed; current shift: ',SHIFT_NORM
-+            ENDIF
-+            IF (.NOT.ACCEPTED) EXIT center_iteration
++         ENDDO
 +
-+            CENTER=TRIAL_CENTER
-+            RADIUS=TRIAL_RADIUS
-+            SMEAR=TRIAL_SMEAR
-+            SHIFT_CART=TRIAL_SHIFT_CART
-+            CHARGE_FRACTION=TRIAL_CHARGE_FRACTION
-+            SECOND_MOMENT=TRIAL_SECOND_MOMENT
-+         ENDDO center_iteration
++         CENTROID_SHIFT_CART=CENTROID_SHIFT_CART/TOTAL_CHARGE
++         SPREAD=SPREAD/TOTAL_CHARGE
++         MIXED_SHIFT_CART=CENTER_MIXING*CENTROID_SHIFT_CART
++         SHIFT_NORM=SQRT(SUM(CENTROID_SHIFT_CART**2))
++         CENTER_CART=MATMUL(LATT_CUR%A,CENTER)
 +
-+         IF (IO%IU0>=0) THEN
-+            WRITE(IO%IU0,'(A,I4,A,I4,A,L2,A,3F11.7,A,F11.6,A,F11.6)') 'WF ',IW,' candidate ',N_REFINED, &
-+               '  converged: ',CONVERGED,'  center: ',CENTER,'  radius: ',RADIUS,'  moment: ',SECOND_MOMENT
++         !IF (IO%IU0>=0) THEN
++         !   WRITE(IO%IU0,'(A,3F16.9,A,ES16.7,A,ES16.7)') &
++         !      '  center_cart: ',CENTER_CART, &
++         !      '  displacement: ',SHIFT_NORM, &
++         !      '  spread: ',SPREAD
++         !ENDIF
++
++         ! Use the unmixed centroid displacement for the fixed-point
++         ! convergence test, so the tolerance is independent of mixing.
++         IF (SHIFT_NORM<CENTER_CONV_TOL) THEN
++            CONVERGED=.TRUE.
++            EXIT center_iteration
 +         ENDIF
 +
-+         IF (CONVERGED .AND. .NOT.BEST_CONVERGED) THEN
-+            BEST_CONVERGED=.TRUE.
-+            BEST_CENTER=CENTER
-+            BEST_RADIUS=RADIUS
-+            BEST_SMEAR=SMEAR
-+            BEST_CHARGE_FRACTION=CHARGE_FRACTION
-+            BEST_SECOND_MOMENT=SECOND_MOMENT
-+         ELSEIF (CONVERGED .EQV. BEST_CONVERGED) THEN
-+            IF (RADIUS<BEST_RADIUS-RADIUS_TIE_TOL .OR. &
-+                (ABS(RADIUS-BEST_RADIUS)<=RADIUS_TIE_TOL .AND. SECOND_MOMENT<BEST_SECOND_MOMENT)) THEN
-+               BEST_CENTER=CENTER
-+               BEST_RADIUS=RADIUS
-+               BEST_SMEAR=SMEAR
-+               BEST_CHARGE_FRACTION=CHARGE_FRACTION
-+               BEST_SECOND_MOMENT=SECOND_MOMENT
-+            ENDIF
-+         ENDIF
-+      ENDDO refine_candidates
++         ! Convert the mixed Cartesian displacement to fractional coordinates.
++         CENTER=CENTER+MATMUL(TRANSPOSE(LATT_CUR%B),MIXED_SHIFT_CART)/TPI
 +
-+      IF (BEST_RADIUS==HUGE(1.0_q)) THEN
-+         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: all refined center candidates failed.')
-+      ENDIF
++      ENDDO center_iteration
 +
-+      TAU_WANN_FRAC(:,IW)=BEST_CENTER-REAL(NINT(BEST_CENTER),q)
++      IF (.NOT.CONVERGED) &
++         CALL vtutor%alert('MLWF_GAMMA_LOCATE_CENTER: center iteration did not converge.')
 +
++      ! Return the center in the centered fractional convention.
++      TAU_WANN_FRAC(:,IW)=CENTER-REAL(NINT(CENTER),q)
++      TAU_WANN_CART=MATMUL(LATT_CUR%A,TAU_WANN_FRAC(:,IW))
 +      IF (IO%IU0>=0) THEN
-+         WRITE(IO%IU0,*) '========== SELECTED FERMI CENTER =========='
-+         WRITE(IO%IU0,'(A,I5,A,I4)') 'ISP: ',ISP,'  Wannier orbital: ',IW
-+         WRITE(IO%IU0,'(A,3F16.9)') 'fractional center: ',TAU_WANN_FRAC(:,IW)
-+         WRITE(IO%IU0,'(A,3F16.9)') 'Cartesian center: ',MATMUL(LATT_CUR%A,TAU_WANN_FRAC(:,IW))
-+         WRITE(IO%IU0,'(A,F14.8)') 'selected radius: ',BEST_RADIUS
-+         WRITE(IO%IU0,'(A,F14.8)') 'selected smear: ',BEST_SMEAR
-+         WRITE(IO%IU0,'(A,F14.8)') 'captured charge fraction: ',BEST_CHARGE_FRACTION
-+         WRITE(IO%IU0,'(A,F14.8)') 'Fermi-weighted second moment: ',BEST_SECOND_MOMENT
-+         WRITE(IO%IU0,'(A,L2)') 'selected candidate converged: ',BEST_CONVERGED
-+
-+         IF (BEST_RADIUS>RADIUS_WARNING_FRACTION*R_COVER) THEN
-+            WRITE(IO%IU0,*) 'WARNING: selected center radius is close to the WS covering radius.'
-+         ENDIF
++         WRITE(IO%IU0,'(A,2I3,/,A,3F12.7,/,A,3F12.7)') &
++            'Spin channel / Wanneir orbital: ',ISP,IW, &
++            'Fractional center: ',TAU_WANN_FRAC(:,IW), &
++            'Cartesian center:  ',TAU_WANN_CART
 +      ENDIF
 +   ENDDO wannier_loop
 +
-+   DEALLOCATE(RHO_GRID,SEED_FRAC,SCREEN_RADIUS,CANDIDATE_ORDER,SCREEN_VALID)
-+   DEALLOCATE(SAMPLE_RHO,SAMPLE_DISTANCE,SAMPLE_DELTA_CART)
-+
-+ CONTAINS
-+
-+   SUBROUTINE ADD_SEED(SEED_INPUT)
-+      REAL(q), INTENT(IN) :: SEED_INPUT(3)
-+
-+      INTEGER :: I_SEED
-+      REAL(q) :: SEED_FOLDED(3),DELTA_CART(3),DISTANCE
-+
-+      SEED_FOLDED=MOD(SEED_INPUT+10.0_q,1.0_q)
-+
-+      DO I_SEED=1,N_CANDIDATE
-+         CALL MINIMUM_IMAGE(SEED_FOLDED,SEED_FRAC(:,I_SEED),DELTA_CART,DISTANCE)
-+         IF (DISTANCE<0.5_q*GRID_STEP) RETURN
-+      ENDDO
-+
-+      N_CANDIDATE=N_CANDIDATE+1
-+
-+      IF (N_CANDIDATE>MAX_CANDIDATES) THEN
-+         CALL vtutor%error('MLWF_GAMMA_LOCATE_CENTER: too many center seeds.')
-+      ENDIF
-+
-+      SEED_FRAC(:,N_CANDIDATE)=SEED_FOLDED
-+   END SUBROUTINE ADD_SEED
-+
-+   SUBROUTINE EVALUATE_CENTER(CENTER_FRAC,GRID_STRIDE,RADIUS,SMEAR,SHIFT,CHARGE_RATIO,MOMENT,IS_VALID)
-+      REAL(q), INTENT(IN) :: CENTER_FRAC(3)
-+      INTEGER, INTENT(IN) :: GRID_STRIDE
-+      REAL(q), INTENT(OUT) :: RADIUS,SMEAR,SHIFT(3),CHARGE_RATIO,MOMENT
-+      LOGICAL, INTENT(OUT) :: IS_VALID
-+
-+      INTEGER :: NSAMPLE,ISAMPLE,J1,J2,J3,INDEX_GRID,IBISECT
-+      REAL(q) :: GRID_FRAC(3),DELTA_CART(3),DISTANCE
-+      REAL(q) :: R_LOW,R_HIGH,R_MID,Q_TOTAL,Q_ENVELOPE,WEIGHT,WEIGHTED_RHO,FERMI_ARG
-+
-+      NSAMPLE=0
-+
-+      DO J3=0,NZ-1,GRID_STRIDE
-+         DO J2=0,NY-1,GRID_STRIDE
-+            DO J1=0,NX-1,GRID_STRIDE
-+               INDEX_GRID=J1+J2*NX+J3*NX*NY+1
-+               IF (INDEX_GRID>NP_GRID) CYCLE
-+
-+               GRID_FRAC=(/REAL(J1,q)/REAL(NX,q),REAL(J2,q)/REAL(NY,q),REAL(J3,q)/REAL(NZ,q)/)
-+               CALL MINIMUM_IMAGE(GRID_FRAC,CENTER_FRAC,DELTA_CART,DISTANCE)
-+
-+               NSAMPLE=NSAMPLE+1
-+               SAMPLE_RHO(NSAMPLE)=RHO_GRID(INDEX_GRID)
-+               SAMPLE_DISTANCE(NSAMPLE)=DISTANCE
-+               SAMPLE_DELTA_CART(:,NSAMPLE)=DELTA_CART
-+            ENDDO
-+         ENDDO
-+      ENDDO
-+
-+      Q_TOTAL=SUM(SAMPLE_RHO(1:NSAMPLE))
-+
-+      IF (Q_TOTAL<=1.0E-30_q) THEN
-+         IS_VALID=.FALSE.
-+         RADIUS=HUGE(1.0_q)
-+         SMEAR=0.0_q
-+         SHIFT=0.0_q
-+         CHARGE_RATIO=0.0_q
-+         MOMENT=HUGE(1.0_q)
-+         RETURN
-+      ENDIF
-+
-+      R_LOW=0.0_q
-+      R_HIGH=R_SEARCH_MAX
-+      SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*R_HIGH)
-+      Q_ENVELOPE=ENVELOPE_CHARGE(R_HIGH,SMEAR,NSAMPLE)
-+
-+      IF (Q_ENVELOPE<TARGET_CHARGE*Q_TOTAL) THEN
-+         IS_VALID=.FALSE.
-+         RADIUS=HUGE(1.0_q)
-+         SHIFT=0.0_q
-+         CHARGE_RATIO=Q_ENVELOPE/Q_TOTAL
-+         MOMENT=HUGE(1.0_q)
-+         RETURN
-+      ENDIF
-+
-+      DO IBISECT=1,RADIUS_BISECT_ITER
-+         R_MID=0.5_q*(R_LOW+R_HIGH)
-+         SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*R_MID)
-+         Q_ENVELOPE=ENVELOPE_CHARGE(R_MID,SMEAR,NSAMPLE)
-+
-+         IF (Q_ENVELOPE<TARGET_CHARGE*Q_TOTAL) THEN
-+            R_LOW=R_MID
-+         ELSE
-+            R_HIGH=R_MID
-+         ENDIF
-+      ENDDO
-+
-+      RADIUS=R_HIGH
-+      SMEAR=MAX(SMEAR_GRID_FRACTION*GRID_STEP,SMEAR_RADIUS_FRACTION*RADIUS)
-+      SHIFT=0.0_q
-+      MOMENT=0.0_q
-+      Q_ENVELOPE=0.0_q
-+
-+      DO ISAMPLE=1,NSAMPLE
-+         FERMI_ARG=(SAMPLE_DISTANCE(ISAMPLE)-RADIUS)/SMEAR
-+
-+         IF (FERMI_ARG>50.0_q) THEN
-+            WEIGHT=0.0_q
-+         ELSEIF (FERMI_ARG<-50.0_q) THEN
-+            WEIGHT=1.0_q
-+         ELSE
-+            WEIGHT=1.0_q/(1.0_q+EXP(FERMI_ARG))
-+         ENDIF
-+
-+         WEIGHTED_RHO=SAMPLE_RHO(ISAMPLE)*WEIGHT
-+         Q_ENVELOPE=Q_ENVELOPE+WEIGHTED_RHO
-+         SHIFT=SHIFT+WEIGHTED_RHO*SAMPLE_DELTA_CART(:,ISAMPLE)
-+         MOMENT=MOMENT+WEIGHTED_RHO*SAMPLE_DISTANCE(ISAMPLE)**2
-+      ENDDO
-+
-+      SHIFT=SHIFT/MAX(Q_ENVELOPE,1.0E-30_q)
-+      MOMENT=MOMENT/MAX(Q_ENVELOPE,1.0E-30_q)
-+      CHARGE_RATIO=Q_ENVELOPE/Q_TOTAL
-+      IS_VALID=.TRUE.
-+   END SUBROUTINE EVALUATE_CENTER
-+
-+   FUNCTION ENVELOPE_CHARGE(RADIUS,SMEAR,NSAMPLE) RESULT(CHARGE)
-+      REAL(q), INTENT(IN) :: RADIUS,SMEAR
-+      INTEGER, INTENT(IN) :: NSAMPLE
-+
-+      INTEGER :: ISAMPLE
-+      REAL(q) :: CHARGE,FERMI_ARG,WEIGHT
-+
-+      CHARGE=0.0_q
-+
-+      DO ISAMPLE=1,NSAMPLE
-+         FERMI_ARG=(SAMPLE_DISTANCE(ISAMPLE)-RADIUS)/SMEAR
-+
-+         IF (FERMI_ARG>50.0_q) THEN
-+            WEIGHT=0.0_q
-+         ELSEIF (FERMI_ARG<-50.0_q) THEN
-+            WEIGHT=1.0_q
-+         ELSE
-+            WEIGHT=1.0_q/(1.0_q+EXP(FERMI_ARG))
-+         ENDIF
-+
-+         CHARGE=CHARGE+SAMPLE_RHO(ISAMPLE)*WEIGHT
-+      ENDDO
-+   END FUNCTION ENVELOPE_CHARGE
-+
-+   SUBROUTINE MINIMUM_IMAGE(POINT_FRAC,CENTER_FRAC,DELTA_CART_MIN,DISTANCE_MIN)
-+      REAL(q), INTENT(IN) :: POINT_FRAC(3),CENTER_FRAC(3)
-+      REAL(q), INTENT(OUT) :: DELTA_CART_MIN(3),DISTANCE_MIN
-+
-+      INTEGER :: BASE_IMAGE(3),J1,J2,J3
-+      REAL(q) :: DELTA_FRAC(3),DELTA_CART(3),DISTANCE2,DISTANCE2_MIN
-+
-+      BASE_IMAGE=NINT(CENTER_FRAC-POINT_FRAC)
-+      DISTANCE2_MIN=HUGE(1.0_q)
-+      DELTA_CART_MIN=0.0_q
-+
-+      DO J1=-1,1
-+         DO J2=-1,1
-+            DO J3=-1,1
-+               DELTA_FRAC=POINT_FRAC+REAL(BASE_IMAGE+(/J1,J2,J3/),q)-CENTER_FRAC
-+               DELTA_CART=DELTA_FRAC(1)*LATT_CUR%A(:,1)+DELTA_FRAC(2)*LATT_CUR%A(:,2)+DELTA_FRAC(3)*LATT_CUR%A(:,3)
-+               DISTANCE2=SUM(DELTA_CART**2)
-+
-+               IF (DISTANCE2<DISTANCE2_MIN) THEN
-+                  DISTANCE2_MIN=DISTANCE2
-+                  DELTA_CART_MIN=DELTA_CART
-+               ENDIF
-+            ENDDO
-+         ENDDO
-+      ENDDO
-+
-+      DISTANCE_MIN=SQRT(DISTANCE2_MIN)
-+   END SUBROUTINE MINIMUM_IMAGE
++   DEALLOCATE(RHO_GRID)
 +
 + END SUBROUTINE MLWF_GAMMA_ADAPTIVE_LOCATE_CENTER
 +!***********************************************************************
@@ -1588,7 +1274,7 @@ index 57cf4bd..ed89717 100644
 +   ! Scalar/non-spinor phase convention.
 +   !====================================================================
 +   CASE (1)
-+
++      IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Starting Scalar phase fixing...'
 +      DO M = 1, NUM_WANN
 +         MAX_INDEX = MAXLOC(ABS(WF_SPINOR(:,1,M)),DIM=1)
 +         Z_MAX = WF_SPINOR(MAX_INDEX,1,M)
@@ -1603,9 +1289,8 @@ index 57cf4bd..ed89717 100644
 +         U_GM(:,M) = U_GM(:,M)*C_CORR
 +
 +         IF (IO%IU0 >= 0) THEN
-+            WRITE(IO%IU0,*) '========== SCALAR GAMMA PHASE FIX =========='
-+            WRITE(IO%IU0,'(A,I5,A,ES16.7)') 'Wannier orbital: ',M,' max rho: ',MAX_RHO
-+            WRITE(IO%IU0,'(A,2F16.9)') 'correction (Re,Im): ',REAL(C_CORR,q),AIMAG(C_CORR)
++            WRITE(IO%IU0,'(A,I3,A,2F12.6)') &
++               'Wannier orbital: ',M,' Correction (Re,Im): ',REAL(C_CORR,q),AIMAG(C_CORR)
 +         ENDIF
 +      ENDDO
 +
@@ -1614,6 +1299,7 @@ index 57cf4bd..ed89717 100644
 +   !====================================================================
 +   CASE (2)
 +
++      IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Starting Spinor phase fixing...'
 +      ! Construct the charge-weighted common-axis tensor:
 +      ! K_ij = sum_alpha [ integral s_i(r)s_j(r)/rho(r) ] / [ integral rho(r) ]
 +      ! The eigenvector with the smallest eigenvalue defines the new z axis.
@@ -1745,7 +1431,6 @@ index 57cf4bd..ed89717 100644
 +      DET_V = V_SPIN(1,1)*V_SPIN(2,2)-V_SPIN(1,2)*V_SPIN(2,1)
 +
 +      IF (IO%IU0 >= 0) THEN
-+         WRITE(IO%IU0,*) '========== NCL COMMON SPIN BASIS =========='
 +         WRITE(IO%IU0,'(A,3F14.8)') 'new z axis: ',AXIS
 +         WRITE(IO%IU0,'(A,2ES16.7)') 'objective old/new: ',OBJECTIVE_OLD,EIG_MIN
 +         WRITE(IO%IU0,'(A,4F14.8)') 'V row 1 (Re,Im): ', &
@@ -1806,7 +1491,6 @@ index 57cf4bd..ed89717 100644
 +         U_GM(:,M) = U_GM(:,M)*C_CORR
 +
 +         IF (IO%IU0 >= 0) THEN
-+            WRITE(IO%IU0,*) '========== NCL GAMMA PHASE FIX =========='
 +            WRITE(IO%IU0,'(A,I5,A,ES16.7)') 'Wannier orbital: ',M,' WS charge: ',CHARGE_TOTAL
 +            WRITE(IO%IU0,'(A,2ES18.9)') 'C_alpha (Re,Im): ',REAL(C_TOTAL,q),AIMAG(C_TOTAL)
 +            WRITE(IO%IU0,'(A,2ES16.7)') 'correction phase / eta: ',-0.5_q*ARG_C,ETA
@@ -1891,7 +1575,7 @@ index 57cf4bd..ed89717 100644
 +   ALLOCATE(S_3D(WDES%NB_TOT,WDES%NB_TOT,NUM_WANN))
 +   ALLOCATE(I_KGAMMA(NUM_BAND,NUM_BAND,NUM_WANN,MLWF%NKPTS,WDES%ISPIN))
 +   I_KGAMMA = CMPLX(0.0_q,0.0_q,q)
-+
++   IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Calculating Realspace Overlaps...'
 +   DO ISP = 1, WDES%ISPIN
 +      DO I_K = 1, MLWF%NKPTS
 +
@@ -1914,7 +1598,7 @@ index 57cf4bd..ed89717 100644
 +
 +         J_BAND = 0
 +         DO J_BAND_FULL = 1, WDES%NB_TOT
-+            IF (MLWF%EXCLUDE_BAND(J_BAND_FULL)) CYCLE
++            IF (MLWF%EXCLUDE_BAND(J_BAND_FULL)) CYCLE 
 +            J_BAND = J_BAND + 1
 +            I_BAND = 0
 +            DO I_BAND_FULL = 1, WDES%NB_TOT
@@ -1997,7 +1681,7 @@ index 57cf4bd..ed89717 100644
 +
 +   ALLOCATE(MLWF%A_matrix(NUM_BAND,NUM_WANN,NKPTS,ISPIN))
 +   MLWF%A_matrix = (0.0_q,0.0_q)
-+
++   IF (IO%IU0 >= 0) WRITE(IO%IU0,*) 'Calculating Amn matrix...'
 +   DO ISP=1,ISPIN
 +      DO I_K=1,NKPTS
 +         DO I_WANN=1,NUM_WANN
@@ -2011,10 +1695,10 @@ index 57cf4bd..ed89717 100644
 +#endif
 +
  !***********************************************************************
-diff --git a/src/pead.F b/src/pead.F
+diff --git a/pead_oroginal.F b/pead.1.0.F
 index 9ba933a..0114c2a 100644
---- a/src/pead.F
-+++ b/src/pead.F
+--- a/pead_oroginal.F
++++ b/pead.1.0.F
 @@ -41,3 +41,3 @@
                  LBORN,BORN_CHARGES_PEAD,W_STORE,FAC, &
 -                PEAD_DPSI_DK_1K
