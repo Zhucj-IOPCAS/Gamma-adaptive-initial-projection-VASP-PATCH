@@ -68,7 +68,7 @@ Let:
 - $\mathcal G=\mathcal O\setminus\mathcal F$: subspace formed by the non-frozen outer states;
 - $L=J-M$: number of free directions to be selected from $\mathcal G$.
 
-The dimensions satisfy
+If there is no frozen window, then $\mathcal F=\varnothing$ and $M=0$. The dimensions satisfy
 
 $$M\leq J\leq B\leq N.$$
 
@@ -300,53 +300,66 @@ $$U_{\mathrm{total}}^{(\Gamma)}=SU^{(\Gamma)}.$$
 
 ### 1.3 Locate center: orbital centers of the Gamma-point initial guesses
 
-For each localized Gamma-point orbital, its center is defined as the position at which a minimum-radius Fermi envelope contains a prescribed fraction of the charge.
+For each localized Gamma-point orbital, its center is defined as a local minimum of the second moment of its real-space charge density. Provided that the orbital is localized within the WS cell, this definition uses positions and charge density directly in real space, thereby avoiding expansion errors in $\mathbf b$ and complex-phase branch cuts.
 
 #### 1.3.1 Real-space charge density
 
 The charge density of orbital $\alpha$ is
 
-$$\rho_\alpha(\mathbf r)=\sum_s|\phi_{\alpha s}^{\Gamma}(\mathbf r)|^2,$$
+$$
+\rho_\alpha(\mathbf r)=\sum_s|\phi_{\alpha s}^{\Gamma}(\mathbf r)|^2,
+$$
 
 where a scalar wavefunction has one component, while a spinor wavefunction is summed over both spin components.
 
-#### 1.3.2 Fermi envelope and minimum envelope radius
+#### 1.3.2 Periodic second moment
 
-For each candidate envelope center $\mathbf r_c$, construct a Wigner-Seitz cell centered at $\mathbf r_c$. In what follows, $\mathbf r$ denotes the coordinate relative to the envelope center within this WS cell, so $|\mathbf r|$ is the distance from the envelope center.
+Let $\mathbf r_i$ be the fractional coordinate of a real-space FFT grid point, $\mathbf c$ the fractional coordinate of the trial center, and $A$ the lattice matrix. For every grid point, select the periodic image (in the WS cell) that minimizes the Cartesian distance:
 
-The Fermi envelope is defined as
+$$
+\mathbf R_i(\mathbf c)
+=\mathrm{argmin}_{\mathbf R}
+\left|A(\mathbf r_i+\mathbf R-\mathbf c)\right|^2.
+$$
 
-$$f_R(\mathbf r)=\left[1+\exp\left(\frac{|\mathbf r|-R}{\sigma}\right)\right]^{-1}.$$
+Define the minimum-image Cartesian displacement from the trial center by
 
-The fraction of charge inside the envelope is
+$$
+\mathbf d_i(\mathbf c)
+=A\left[\mathbf r_i+\mathbf R_i(\mathbf c)-\mathbf c\right].
+$$
 
-$$q_\alpha(\mathbf r_c,R)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_R(\mathbf r)d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)d\mathbf r}.$$
+The second moment is
 
-For a prescribed target charge fraction $\eta$, the minimum envelope radius satisfying the condition is determined for each candidate center:
+$$
+\Omega_{\mathrm c,\alpha}(\mathbf c)
+=\frac{\sum_i\rho_{\alpha i}|\mathbf d_i(\mathbf c)|^2}
+{\sum_i\rho_{\alpha i}}.
+$$
 
-$$R_\alpha(\mathbf r_c)=\min\lbrace R\mid q_\alpha(\mathbf r_c,R)\geq\eta\rbrace.$$
+#### 1.3.3 Periodic Lloyd iteration
 
-The center search starts independently from multiple candidate positions, including the position of maximum orbital charge density and positions distributed uniformly throughout the periodic cell. The candidates are first ranked by the minimum envelope radius required to contain the target charge fraction. Full self-consistent center iterations are then performed, starting from candidates with smaller envelope radii.
+The Cartesian displacement of the charge centroid relative to the current center is:
 
-#### 1.3.3 Self-consistent iteration of the envelope center
+$$
+\mathbf s_\alpha^{(k)}
+=\frac{\sum_i\rho_{\alpha i}\mathbf d_i(\mathbf c^{(k)})}
+{\sum_i\rho_{\alpha i}}.
+$$
 
-The displacement of the center of charge within the envelope relative to the envelope center is
+Update the center with the mixing parameter $\alpha_{\mathrm c}$:
 
-$$\mathbf s_\alpha(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)\mathbf r d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)d\mathbf r}.$$
+$$
+\mathbf c^{(k+1)}
+=\mathbf c^{(k)}
++\alpha_{\mathrm c}\frac{B^T\mathbf s_\alpha^{(k)}}{2\pi}.
+$$
 
-Move the envelope center toward the center of charge within the envelope:
+After each update, redetermine the WS cell until
 
-$$\mathbf r_{\mathrm{trial}}=\mathbf r_c+\gamma\mathbf s_\alpha(\mathbf r_c).$$
-
-At the trial center, reconstruct the WS cell and recompute the minimum envelope radius and envelope-center displacement. Accept the trial center if the envelope-center displacement decreases or the envelope radius becomes smaller. Repeat the procedure until
-
-$$\left|\mathbf s_\alpha(\mathbf r_c)\right|<\epsilon_c.$$
-
-For each converged center, compute the second moment of the charge within the Fermi envelope:
-
-$$\mu_{2,\alpha}(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)|\mathbf r|^2d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)d\mathbf r}.$$
-
-Finally, select the self-consistent center with the smallest envelope radius. When the envelope radii are close, select the center with the smaller second moment.
+$$
+|\mathbf s_\alpha^{(k)}|<\epsilon_c.
+$$
 
 ### 1.4 Phase fix: global phase convention for the Gamma-point initial guesses
 
@@ -354,7 +367,7 @@ Finally, select the self-consistent center with the smallest envelope radius. Wh
 
 For a scalar orbital, take the position of maximum wavefunction amplitude,
 
-$$\mathbf r_\alpha^{\max}=\mathrm\ast{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
+$$\mathbf r_\alpha^{\max}=\mathrm{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
 
 and apply the phase correction
 
@@ -476,7 +489,7 @@ $$\widetilde\Phi_{\bar\alpha}^\Gamma=\pm\Theta\widetilde\Phi_\alpha^\Gamma.$$
 
 ### 2.1 Overlaps between Gamma-point and full-$\mathbf k$ wavefunctions
 
-For Wannier orbital $\alpha$, use its center $\boldsymbol\tau_\alpha$ to construct the Wigner--Seitz cell $\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)$. Define the overlap between a full-$\mathbf k$ Bloch state and a Gamma-point Bloch state within this WS cell as
+For Wannier orbital $\alpha$, use its center $\boldsymbol\tau_\alpha$ to construct the Wigner-Seitz cell $\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)$. Define the overlap between a full-$\mathbf k$ Bloch state and a Gamma-point Bloch state within this WS cell as
 
 $$I_{nm}^{(\mathbf k;\alpha)}=\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k}^\ast(\mathbf r)\psi_{m\Gamma}(\mathbf r).$$
 

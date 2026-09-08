@@ -68,7 +68,7 @@ $$\mathcal F=\lbrace m\in\mathcal O\mid E_{\mathrm{froz}}^{\min}\leq\epsilon_m\l
 - $\mathcal G=\mathcal O\setminus\mathcal F$：non-frozen outer states 组成的子空间；
 - $L=J-M$：需要从 $\mathcal G$ 中选出的自由方向数。
 
-各维数满足
+如果没有 frozen window，则 $\mathcal F=\varnothing$ 且 $M=0$。各维数满足
 
 $$M\leq J\leq B\leq N.$$
 
@@ -300,53 +300,67 @@ $$U_{\mathrm{total}}^{(\Gamma)}=SU^{(\Gamma)}.$$
 
 ### 1.3 Locate center：Gamma 初猜的轨道中心
 
-对每个 Gamma 点局域轨道，其中心定义为能够用最小 Fermi 包络包含给定比例电荷的位置。
+对每个 Gamma 点局域轨道，其中心定义为实空间电荷密度的二阶矩的极小点。在轨道局域在 WS 原胞的前提下，该定义直接在实空间中使用位置和电荷密度，因而避免了 $\mathbf b$ 的展开误差以及复相位 branch cut。
 
 #### 1.3.1 实空间电荷密度
 
 轨道 $\alpha$ 的电荷密度为
 
-$$\rho_\alpha(\mathbf r)=\sum_s|\phi_{\alpha s}^{\Gamma}(\mathbf r)|^2,$$
+$$
+\rho_\alpha(\mathbf r)=\sum_s|\phi_{\alpha s}^{\Gamma}(\mathbf r)|^2,
+$$
 
 其中标量波函数只有一个分量，spinor 波函数则对两个自旋分量求和。
 
-#### 1.3.2 Fermi 包络与最小包络半径
+#### 1.3.2 周期性二阶矩
 
-对于每个候选包络中心 $\mathbf r_c$，构造以 $\mathbf r_c$ 为中心的 Wigner-Seitz 原胞。以下 $\mathbf r$ 均表示该 WS 原胞内相对于包络中心的坐标，因此 $|\mathbf r|$ 是到包络中心的距离。
+设实空间 FFT 网格点的分数坐标为 $\mathbf r_i$，trial center 的分数坐标为 $\mathbf c$，晶格矩阵为 $A$。对每个网格点选择使笛卡尔距离最小的周期像（WS原胞）：
 
-Fermi 包络定义为
+$$
+\mathbf R_i(\mathbf c)
+=\mathrm{argmin}_{\mathbf R}
+\left|A(\mathbf r_i+\mathbf R-\mathbf c)\right|^2.
+$$
 
-$$f_R(\mathbf r)=\left[1+\exp\left(\frac{|\mathbf r|-R}{\sigma}\right)\right]^{-1}.$$
 
-包络内的电荷比例为
+定义网格点相对于 trial center 的 minimum-image 笛卡尔位移：
 
-$$q_\alpha(\mathbf r_c,R)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_R(\mathbf r)d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)d\mathbf r}.$$
+$$
+\mathbf d_i(\mathbf c)
+=A\left[\mathbf r_i+\mathbf R_i(\mathbf c)-\mathbf c\right].
+$$
 
-给定目标电荷比例 $\eta$，对每个候选中心确定满足该条件的最小包络半径：
+二阶矩为
 
-$$R_\alpha(\mathbf r_c)=\min\lbrace R\mid q_\alpha(\mathbf r_c,R)\geq\eta\rbrace.$$
+$$
+\Omega_{\mathrm c,\alpha}(\mathbf c)
+=\frac{\sum_i\rho_{\alpha i}|\mathbf d_i(\mathbf c)|^2}
+{\sum_i\rho_{\alpha i}}.
+$$
 
-中心搜索从多个候选位置分别开始，包括轨道电荷密度最大的位置和均匀分布在周期原胞中的位置。首先将候选位置按照包含目标电荷比例所需的最小包络半径排序。随后从包络半径较小的候选位置开始进行完整的自洽中心迭代。
+#### 1.3.3 周期 Lloyd 迭代
 
-#### 1.3.3 包络中心的自洽迭代
+电荷质心相对于当前中心的笛卡尔位移为：
 
-包络内的电荷中心相对于包络中心的位移为
+$$
+\mathbf s_\alpha^{(k)}
+=\frac{\sum_i\rho_{\alpha i}\mathbf d_i(\mathbf c^{(k)})}
+{\sum_i\rho_{\alpha i}}.
+$$
 
-$$\mathbf s_\alpha(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)\mathbf r d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)d\mathbf r}.$$
+用 mixing 参数 $\alpha_{\mathrm c}$ 更新中心：
+$$
+\mathbf c^{(k+1)}
+=\mathbf c^{(k)}
++\alpha_{\mathrm c}\frac{B^T\mathbf s_\alpha^{(k)}}{2\pi}.
+$$
 
-将包络中心向包络内的电荷中心移动：
+每次更新后重新确定 WS 原胞，直至
 
-$$\mathbf r_{\mathrm{trial}}=\mathbf r_c+\gamma\mathbf s_\alpha(\mathbf r_c).$$
+$$
+|\mathbf s_\alpha^{(k)}|<\epsilon_c.
+$$
 
-在试探中心重新构造 WS 原胞，并重新计算最小包络半径和包络中心位移。包络中心位移减小或包络半径减小时接受试探中心，重复上述过程直至
-
-$$\left|\mathbf s_\alpha(\mathbf r_c)\right|<\epsilon_c.$$
-
-对每个收敛中心，计算 Fermi 包络内的电荷二阶矩：
-
-$$\mu_{2,\alpha}(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)|\mathbf r|^2d\mathbf r}{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R_\alpha}(\mathbf r)d\mathbf r}.$$
-
-最终选择包络半径最小的自洽中心；当包络半径接近时，选择二阶矩更小的中心。
 
 ### 1.4 Phase fix：Gamma 初猜的整体相位规范
 
@@ -354,7 +368,7 @@ $$\mu_{2,\alpha}(\mathbf r_c)=\frac{\int_{\mathrm{WS}}\rho_\alpha(\mathbf r)f_{R
 
 对于标量轨道，取波函数振幅最大的位置
 
-$$\mathbf r_\alpha^{\max}=\mathrm\ast{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
+$$\mathbf r_\alpha^{\max}=\mathrm{argmax}_{\mathbf r}|\phi_\alpha^\Gamma(\mathbf r)|,$$
 
 并使用相位修正
 
@@ -476,7 +490,7 @@ $$\widetilde\Phi_{\bar\alpha}^\Gamma=\pm\Theta\widetilde\Phi_\alpha^\Gamma.$$
 
 ### 2.1 Gamma 点与全 $\mathbf k$ 点波函数的 overlap
 
-对于 Wannier 轨道 $\alpha$，以其中心 $\boldsymbol\tau_\alpha$ 构造 Wigner--Seitz 原胞 $\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)$。定义全 $\mathbf k$ Bloch 态与 Gamma 点 Bloch 态在该 WS 原胞内的 overlap：
+对于 Wannier 轨道 $\alpha$，以其中心 $\boldsymbol\tau_\alpha$ 构造 Wigner-Seitz 原胞 $\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)$。定义全 $\mathbf k$ Bloch 态与 Gamma 点 Bloch 态在该 WS 原胞内的 overlap：
 
 $$I_{nm}^{(\mathbf k;\alpha)}=\int_{\Omega_{\mathrm{WS}}(\boldsymbol\tau_\alpha)}d^3r\,\psi_{n\mathbf k}^\ast(\mathbf r)\psi_{m\Gamma}(\mathbf r).$$
 
