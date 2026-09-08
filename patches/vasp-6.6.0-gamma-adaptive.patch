@@ -1,7 +1,7 @@
-diff --git a/src/mlwf.F b/src/mlwf.F
+diff --git a/mlwf.F b/mlwf.F
 index 57cf4bd..9dfc3cb 100644
---- a/src/mlwf.F
-+++ b/src/mlwf.F
+--- a/mlwf.F
++++ b/mlwf.F
 @@ -11,3 +11,3 @@ MODULE mlwf
     ENUM, BIND(C)
 -      ENUMERATOR :: PROJ_UNKNOWN, PROJ_SCDM, PROJ_WANNIER90, PROJ_LOCPROJ, PROJ_LOCPROJAUTO
@@ -1695,10 +1695,10 @@ index 57cf4bd..9dfc3cb 100644
 +#endif
 +
  !***********************************************************************
-diff --git a/src/pead.F b/src/pead.F
+diff --git a/pead.F b/pead.F
 index 9ba933a..0114c2a 100644
---- a/src/pead.F
-+++ b/src/pead.F
+--- a/pead.F
++++ b/pead.F
 @@ -41,3 +41,3 @@
                  LBORN,BORN_CHARGES_PEAD,W_STORE,FAC, &
 -                PEAD_DPSI_DK_1K
